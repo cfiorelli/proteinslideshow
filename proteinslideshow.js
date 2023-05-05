@@ -5,7 +5,7 @@ let intervalHandle;
 let currentPdbIds = [];
 
 async function fetchPdbIds() {
-  const response = await fetch("https://cors-anywhere.herokuapp.com/https://data.rcsb.org/rest/v1/holdings/current/entry_ids?list_type=entry_ids");
+  const response = await fetch("https://data.rcsb.org/rest/v1/holdings/current/entry_ids?list_type=entry_ids");
   if (response.ok) {
     const data = await response.json();
     return data;
