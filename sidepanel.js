@@ -7,20 +7,19 @@
     container: null,
     listEl: null,
     analyzeButton: null,
-    filterButton: null,
     clearButton: null,
-    loadInput: null,
-    loadButton: null,
+    searchInput: null,
     liveRegion: null,
     residues: [],
     listItems: new Map(),
     selectedResidues: new Set(),
     disabledResidues: new Set(),
-    filterEnabled: true,
     contactMapCache: new Map(),
     inProximitySet: new Set(),
     interactionSet: new Set(),
     proximityThreshold: 5,
+    dividerEl: null,
+    filterQuery: "",
   };
 
   function ensureLiveRegion() {
@@ -53,17 +52,58 @@
     state.analyzeButton.disabled = count < 2 || count > MAX_SELECTION;
   }
 
-  function updateFilterButton() {
-    if (!state.filterButton) return;
-    state.filterButton.classList.toggle("is-active", state.filterEnabled);
-    state.filterButton.textContent = state.filterEnabled ? "Filter Neighbors" : "Show All Residues";
+  function setFilterQuery(raw = "") {
+    const normalized = raw.trim();
+    if (state.searchInput && state.searchInput.value !== normalized) {
+      state.searchInput.value = normalized;
+    }
+    state.filterQuery = normalized.toLowerCase();
+    applySearchFilter();
+  }
+
+  function applySearchFilter() {
+    const query = state.filterQuery;
+    const hasQuery = query.length > 0;
+    state.listItems.forEach(({ element, label }) => {
+      const labelText = label || element.dataset.label || "";
+      const match = !hasQuery || labelText.includes(query);
+      element.style.display = match ? "" : "none";
+    });
+    if (state.dividerEl) {
+      state.dividerEl.style.display = hasQuery ? "none" : "";
+    }
+  }
+
+  function handleSearchInput(event) {
+    setFilterQuery(event.target.value || "");
+  }
+
+  function handleSearchKeydown(event) {
+    if (event.key !== "Enter") return;
+    const matches = [];
+    state.listItems.forEach(({ element }, key) => {
+      if (element.style.display === "none") return;
+      matches.push(key);
+    });
+    if (!matches.length) return;
+    const firstMatch = matches[0];
+    const residue = state.residues.find((item) => (item.key || item.id) === firstMatch);
+    const label = residue ? residue.label : firstMatch;
+    const next = new Set(state.selectedResidues);
+    next.add(firstMatch);
+    commitSelection(next, {
+      focusKey: firstMatch,
+      focus: true,
+      reason: "search",
+      message: `${label} selected from search results.`,
+    });
   }
 
   function syncSelectionUI() {
     state.listItems.forEach(({ element, checkbox, tip }, key) => {
       const isSelected = state.selectedResidues.has(key);
       const isDisabled = state.disabledResidues.has(key) && !isSelected;
-      const hasInteraction = state.interactionSet.has(key) && !isSelected;
+      const hasInteraction = state.interactionSet.has(key);
       const isInProximity = state.inProximitySet.has(key) && !hasInteraction && !isSelected;
 
       checkbox.checked = isSelected;
@@ -161,6 +201,7 @@
 
     state.listEl.innerHTML = "";
     state.listEl.appendChild(fragment);
+    applySearchFilter();
   }
 
   function commitSelection(nextSelected, { focusKey = null, focus = false, reason = "update", message, accepted = true } = {}) {
@@ -237,12 +278,6 @@
     });
   }
 
-  function handleFilterToggle() {
-    state.filterEnabled = !state.filterEnabled;
-    updateFilterButton();
-    dispatchEvent("sidepanel:filterToggle", { enabled: state.filterEnabled });
-  }
-
   function handleClearSelections() {
     if (!state.selectedResidues.size) {
       announce("No residues currently selected.");
@@ -313,30 +348,6 @@
     });
   }
 
-  function handleQuickLoad() {
-    if (!state.loadInput) return;
-    const raw = state.loadInput.value.trim();
-    if (!raw) {
-      announce("Enter a residue label like \"ALA A265\" to load.");
-      return;
-    }
-
-    const residue = findResidueByQuery(raw);
-    if (!residue) {
-      announce(`No residue matching "${raw}" found.`);
-      return;
-    }
-
-    const key = residue.key || residue.id;
-    commitSelection(new Set([key]), {
-      focusKey: key,
-      focus: true,
-      reason: "quickload",
-      message: `${residue.label || key} selected.`,
-    });
-    state.loadInput.value = "";
-  }
-
   function attachListeners() {
     if (state.listEl) {
       state.listEl.addEventListener("change", handleListChange);
@@ -344,23 +355,12 @@
     if (state.analyzeButton) {
       state.analyzeButton.addEventListener("click", handleAnalyzeClick);
     }
-    if (state.filterButton) {
-      state.filterButton.addEventListener("click", handleFilterToggle);
-      updateFilterButton();
-    }
     if (state.clearButton) {
       state.clearButton.addEventListener("click", handleClearSelections);
     }
-    if (state.loadButton) {
-      state.loadButton.addEventListener("click", handleQuickLoad);
-    }
-    if (state.loadInput) {
-      state.loadInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          handleQuickLoad();
-        }
-      });
+    if (state.searchInput) {
+      state.searchInput.addEventListener("input", handleSearchInput);
+      state.searchInput.addEventListener("keydown", handleSearchKeydown);
     }
   }
 
@@ -376,6 +376,11 @@
     state.listEl.innerHTML = "";
 
     if (!state.residues.length) {
+      state.filterQuery = "";
+      if (state.searchInput) {
+        state.searchInput.value = "";
+      }
+      applySearchFilter();
       syncSelectionUI();
       return;
     }
@@ -396,21 +401,23 @@
       checkbox.type = "checkbox";
       checkbox.setAttribute("data-residue-key", key);
 
+      const labelText = residue.label || key;
       const text = document.createElement("span");
-      text.textContent = residue.label || key;
+      text.textContent = labelText;
 
       const tip = document.createElement("span");
       tip.className = "tip";
       tip.textContent = DISABLED_REASON;
       tip.hidden = true;
 
+      item.dataset.label = labelText.toLowerCase();
       label.appendChild(checkbox);
       label.appendChild(text);
       item.appendChild(label);
       item.appendChild(tip);
       fragment.appendChild(item);
 
-      state.listItems.set(key, { element: item, checkbox, tip });
+      state.listItems.set(key, { element: item, checkbox, tip, label: labelText.toLowerCase() });
     });
 
     state.listEl.appendChild(fragment);
@@ -455,13 +462,11 @@
     }
     state.listEl = state.container.querySelector("#residue-list");
     state.analyzeButton = state.container.querySelector("#analyze-interactions");
-    state.filterButton = state.container.querySelector("#toggle-filter");
     state.clearButton = state.container.querySelector("#clear-selections");
-    state.loadInput = state.container.querySelector("#residue-jump-input");
-    state.loadButton = state.container.querySelector("#residue-jump-button");
+    state.searchInput = state.container.querySelector("#residue-search-input");
     state.liveRegion = state.container.querySelector("#live-region");
-    if (state.filterButton) {
-      state.filterEnabled = state.filterButton.classList.contains("is-active");
+    if (state.searchInput && state.filterQuery) {
+      state.searchInput.value = state.filterQuery;
     }
 
     ensureLiveRegion();
