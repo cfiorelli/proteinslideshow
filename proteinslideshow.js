@@ -72,7 +72,35 @@ function logShownEntity(pdbId) {
 
 const CONTACT_DISTANCE_CUTOFF = 5.0; // Å
 
+function tuneStagePerformance(currentStage) {
+  if (!currentStage) return;
+  currentStage.setParameters({
+    quality: "medium",
+    sampleLevel: 0,
+    postProcessing: false,
+    impostor: true,
+    workerDefault: true,
+  });
+  if (currentStage.viewer && currentStage.viewer.renderer) {
+    const renderer = currentStage.viewer.renderer;
+    const targetRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    renderer.setPixelRatio(targetRatio);
+  }
+}
+
+function tuneStageControls(currentStage) {
+  if (!currentStage || !currentStage.viewer || !currentStage.viewer.controls) return;
+  const controls = currentStage.viewer.controls;
+  controls.zoomSpeed = 1.35;
+  controls.rotateSpeed = 1.05;
+  controls.panSpeed = 1.1;
+  controls.staticMoving = true;
+  controls.dynamicDampingFactor = 0.12;
+}
+
 const stage = new NGL.Stage("viewport");
+tuneStagePerformance(stage);
+tuneStageControls(stage);
 if (typeof stage.setBackground === "function") {
   stage.setBackground("#020617", "#0f172a");
 } else if (stage.viewer && typeof stage.viewer.setBackground === "function") {

@@ -14,6 +14,7 @@ A lightweight browser viewer that cycles through random structures from the RCSB
 - **Lightweight analysis** that detects hydrogen bonds, salt bridges, ionic contacts, and disulfide bonds between 2–10 selected residues.
 - **Keyboard shortcuts**: `Space` toggles play/pause, `←` / `→` step backward/forward.
 - **Responsive layout** that keeps the stage centered and metadata readable on phones and desktops.
+- **Optimised navigation** with tuned NGL stage parameters for smoother zooming and panning.
 
 ## Getting Started
 
