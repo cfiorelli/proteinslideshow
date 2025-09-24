@@ -8,8 +8,10 @@ A lightweight browser viewer that cycles through random structures from the RCSB
 - **Robust structure loading**: tries gzipped CIF, raw CIF, then PDB files to avoid format/CORS quirks.
 - **Metadata side panel** with experiment method, resolution, chains, symmetry, annotations, and primary literature links.
 - **Representation controls** (Cartoon, Surface, Ball & Stick) for quick visual changes.
-- **Side-chain interaction analysis** to detect hydrogen bonds, salt bridges, disulfides, and ionic contacts between selected residues.
-- **Live highlighting & filtering** that zooms to labeled residues and suggests nearby partners based on precomputed contact maps.
+- **Side panel quick-load** for jumping straight to any residue label (e.g. `ALA A265`).
+- **Proximity threshold slider** (1–5 Å) that instantly rehydrates the contact map and highlights reachable residues.
+- **Interaction-aware highlighting**: blue tags for residues within range, green tags for residues predicted to form an interaction at the current threshold.
+- **Lightweight analysis** that detects hydrogen bonds, salt bridges, ionic contacts, and disulfide bonds between 2–10 selected residues.
 - **Keyboard shortcuts**: `Space` toggles play/pause, `←` / `→` step backward/forward.
 - **Responsive layout** that keeps the stage centered and metadata readable on phones and desktops.
 
@@ -38,8 +40,17 @@ https://<your-username>.github.io/proteinslideshow/
 | Next / previous structure | Click `Forward` / `Back` or press `→` / `←` |
 | Change representation | Use the **Style** pill buttons (Cartoon / Surface / Ball & Stick) |
 | Toggle spin | Click the **Spin** button (Stop/Start) in the toolbar |
-| Analyze interactions | Pick residues in **Side-chain Interactions** and click **Analyze** |
+| Load a specific PDB | Use the **Load PDB** field in the toolbar and enter a four-character ID |
+| Quick-load a residue | Use the **Quick load a residue** field (accepts labels like `ALA A265`) |
+| Adjust proximity cutoff | Drag the **Proximity threshold** slider (1–5 Å) |
+| Analyze interactions | Pick 2–10 residues in **Side-chain Interactions** and click **Analyze** |
 | Filter residue list | Click **Filter Neighbors** to toggle between contacts-only and full residue lists |
+
+### Reading the residue list
+
+- **Selected residues**: solid blue highlight.
+- **In proximity**: light blue tag + “In proximity” label, indicating the residue sits within the current Å cutoff but is not predicted to interact.
+- **Interaction available**: green highlighting + “Interaction available” label, indicating at least one predicted contact with the current selection at the active threshold.
 
 Hover the metadata panel to see a rendered assembly preview, chain IDs, and primary citation details. Links to DOIs open in a new tab.
 

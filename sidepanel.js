@@ -18,6 +18,9 @@
     disabledResidues: new Set(),
     filterEnabled: true,
     contactMapCache: new Map(),
+    inProximitySet: new Set(),
+    interactionSet: new Set(),
+    proximityThreshold: 5,
   };
 
   function ensureLiveRegion() {
@@ -60,6 +63,8 @@
     state.listItems.forEach(({ element, checkbox, tip }, key) => {
       const isSelected = state.selectedResidues.has(key);
       const isDisabled = state.disabledResidues.has(key) && !isSelected;
+      const hasInteraction = state.interactionSet.has(key) && !isSelected;
+      const isInProximity = state.inProximitySet.has(key) && !hasInteraction && !isSelected;
 
       checkbox.checked = isSelected;
       checkbox.disabled = isDisabled;
@@ -67,6 +72,8 @@
 
       element.classList.toggle("is-selected", isSelected);
       element.classList.toggle("muted", isDisabled);
+      element.classList.toggle("has-interaction", hasInteraction);
+      element.classList.toggle("in-proximity", isInProximity);
       element.setAttribute("aria-selected", String(isSelected));
       element.setAttribute("aria-disabled", String(isDisabled));
 
@@ -81,29 +88,77 @@
   function getOrderedKeys() {
     if (!state.residues.length) return [];
     const selectedKeys = [];
+    const interactionKeys = [];
+    const proximityKeys = [];
     const otherKeys = [];
     state.residues.forEach((residue) => {
       const key = residue.key || residue.id;
       if (state.selectedResidues.has(key)) {
         selectedKeys.push(key);
+      } else if (state.interactionSet.has(key)) {
+        interactionKeys.push(key);
+      } else if (state.inProximitySet.has(key)) {
+        proximityKeys.push(key);
       } else {
         otherKeys.push(key);
       }
     });
-    return selectedKeys.concat(otherKeys);
+    return selectedKeys.concat(interactionKeys, proximityKeys, otherKeys);
   }
 
   function reorderResidueList() {
-    if (!state.listEl || !state.listItems.size) return;
+    if (!state.listEl) return;
+    if (!state.listItems.size) {
+      state.listEl.innerHTML = "";
+      return;
+    }
+
     const orderedKeys = getOrderedKeys();
-    if (!orderedKeys.length) return;
+    if (!orderedKeys.length) {
+      state.listEl.innerHTML = "";
+      return;
+    }
+
     const fragment = document.createDocumentFragment();
+    let dividerInserted = false;
+    const shouldShowDivider = (state.inProximitySet.size > 0 || state.selectedResidues.size > 0 || state.interactionSet.size > 0)
+      && orderedKeys.some((key) =>
+        !state.selectedResidues.has(key)
+        && !state.inProximitySet.has(key)
+        && !state.interactionSet.has(key),
+      );
+
     orderedKeys.forEach((key) => {
       const entry = state.listItems.get(key);
-      if (entry) {
-        fragment.appendChild(entry.element);
+      if (!entry) return;
+
+      const isSelected = state.selectedResidues.has(key);
+      const isInProximity = state.inProximitySet.has(key);
+      const hasInteraction = state.interactionSet.has(key);
+
+      if (
+        shouldShowDivider &&
+        !dividerInserted &&
+        !isSelected &&
+        !isInProximity &&
+        !hasInteraction
+      ) {
+        if (!state.dividerEl) {
+          state.dividerEl = document.createElement("li");
+          state.dividerEl.className = "analysis-divider";
+        }
+        state.dividerEl.textContent = `---- Proximity limit ${state.proximityThreshold.toFixed(1).replace(/\\.0$/, "")}Å ----`;
+        fragment.appendChild(state.dividerEl);
+        dividerInserted = true;
       }
+
+      fragment.appendChild(entry.element);
     });
+
+    if (!dividerInserted && state.dividerEl && state.dividerEl.parentElement) {
+      state.dividerEl.parentElement.removeChild(state.dividerEl);
+    }
+
     state.listEl.innerHTML = "";
     state.listEl.appendChild(fragment);
   }
@@ -111,7 +166,6 @@
   function commitSelection(nextSelected, { focusKey = null, focus = false, reason = "update", message, accepted = true } = {}) {
     state.selectedResidues = new Set(nextSelected || []);
     reorderResidueList();
-    syncSelectionUI();
     if (typeof message === "string" && message.length) {
       announce(message);
     } else {
@@ -316,6 +370,9 @@
     state.contactMapCache = new Map();
     state.listItems.clear();
     state.disabledResidues.clear();
+    state.inProximitySet = new Set();
+    state.interactionSet = new Set();
+    state.dividerEl = null;
     state.listEl.innerHTML = "";
 
     if (!state.residues.length) {
@@ -323,21 +380,9 @@
       return;
     }
 
-    const selectedOrder = [];
-    const otherOrder = [];
-    state.residues.forEach((residue) => {
-      const key = residue.key || residue.id;
-      if (state.selectedResidues.has(key)) {
-        selectedOrder.push(residue);
-      } else {
-        otherOrder.push(residue);
-      }
-    });
-
-    const itemsToRender = selectedOrder.concat(otherOrder);
     const fragment = document.createDocumentFragment();
 
-    itemsToRender.forEach((residue) => {
+    state.residues.forEach((residue) => {
       const key = residue.key || residue.id;
       const item = document.createElement("li");
       item.className = "analysis-item item";
@@ -369,6 +414,7 @@
     });
 
     state.listEl.appendChild(fragment);
+    reorderResidueList();
     syncSelectionUI();
   }
 
@@ -378,18 +424,27 @@
     syncSelectionUI();
   }
 
-  function applyFilter(validResidues) {
-    state.disabledResidues.clear();
+  function applyFilter(validResidues, { proximity = new Set(), interaction = new Set(), threshold } = {}) {
     const allowSet = !validResidues ? null : new Set(validResidues);
 
-    state.listItems.forEach(({ element, checkbox }, key) => {
-      if (!allowSet || allowSet.has(key) || state.selectedResidues.has(key)) {
-        state.disabledResidues.delete(key);
-      } else {
-        state.disabledResidues.add(key);
-      }
-    });
+    state.disabledResidues = new Set();
+    state.inProximitySet = new Set(proximity || []);
+    state.interactionSet = new Set(interaction || []);
 
+    if (typeof threshold === "number" && !Number.isNaN(threshold)) {
+      state.proximityThreshold = threshold;
+    }
+
+    if (allowSet) {
+      state.residues.forEach((residue) => {
+        const key = residue.key || residue.id;
+        if (!allowSet.has(key) && !state.selectedResidues.has(key)) {
+          state.disabledResidues.add(key);
+        }
+      });
+    }
+
+    reorderResidueList();
     syncSelectionUI();
   }
 

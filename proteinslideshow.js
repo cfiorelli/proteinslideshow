@@ -70,6 +70,8 @@ function logShownEntity(pdbId) {
 
 
 
+const CONTACT_DISTANCE_CUTOFF = 5.0; // Å
+
 const stage = new NGL.Stage("viewport");
 if (typeof stage.setBackground === "function") {
   stage.setBackground("#020617", "#0f172a");
@@ -84,6 +86,8 @@ const metadataContentEl = document.getElementById("metadata-content");
 const representationButtons = Array.from(document.querySelectorAll("[data-representation]"));
 const pdbSearchInput = document.getElementById("pdb-search-input");
 const pdbSearchButton = document.getElementById("pdb-search-button");
+const proximitySlider = document.getElementById("proximity-threshold");
+const proximityValueEl = document.getElementById("proximity-value");
 const interactionResultsEl = document.getElementById("interaction-results");
 const toggleSpinButton = document.getElementById("toggle-spin");
 
@@ -103,6 +107,11 @@ let residueDataset = { list: [], map: new Map(), contactMap: new Map() };
 let residueColorMap = new Map();
 let selectedResidueVisuals = new Map();
 let focusTimeout = null;
+let proximityThreshold = CONTACT_DISTANCE_CUTOFF;
+let interactionCache = new Map();
+let applyFilterTimeout = null;
+
+const FILTER_DEBOUNCE_MS = 75;
 
 const HIGHLIGHT_COLORS = [
   "#f97316",
@@ -114,8 +123,6 @@ const HIGHLIGHT_COLORS = [
   "#38bdf8",
   "#f472b6",
 ];
-
-const CONTACT_DISTANCE_CUTOFF = 5.0; // Å
 
 const representationConfigs = {
   cartoon: [
@@ -233,6 +240,51 @@ representationButtons.forEach((button) => {
     }
   });
 });
+
+function formatAngstroms(value) {
+  return `${value.toFixed(1).replace(/\.0$/, "")}Å`;
+}
+
+function scheduleApplyResidueFilter(delay = FILTER_DEBOUNCE_MS) {
+  if (applyFilterTimeout) {
+    clearTimeout(applyFilterTimeout);
+  }
+  applyFilterTimeout = setTimeout(() => {
+    applyFilterTimeout = null;
+    applyResidueFilter();
+  }, delay);
+}
+
+function updateProximityDisplay() {
+  if (proximityValueEl) {
+    proximityValueEl.textContent = formatAngstroms(proximityThreshold);
+  }
+  if (proximitySlider) {
+    const current = parseFloat(proximitySlider.value);
+    if (!Number.isFinite(current) || Math.abs(current - proximityThreshold) > 0.05) {
+      proximitySlider.value = String(proximityThreshold);
+    }
+  }
+}
+
+function setProximityThreshold(nextValue) {
+  const parsed = Number.parseFloat(nextValue);
+  if (!Number.isFinite(parsed)) return;
+  const clamped = Math.min(CONTACT_DISTANCE_CUTOFF, Math.max(1, parsed));
+  if (Math.abs(clamped - proximityThreshold) < 0.0001) return;
+  proximityThreshold = clamped;
+  updateProximityDisplay();
+  scheduleApplyResidueFilter();
+}
+
+if (proximitySlider) {
+  proximitySlider.addEventListener("input", (event) => {
+    setProximityThreshold(event.target.value);
+  });
+  updateProximityDisplay();
+} else if (proximityValueEl) {
+  updateProximityDisplay();
+}
 
 function handleDirectLoad(pdbId) {
   const trimmed = (pdbId || "").trim().toUpperCase();
@@ -575,7 +627,7 @@ function computeResidueContacts(structure, residues) {
   const contactMap = new Map();
 
   residues.forEach((residue) => {
-    contactMap.set(residue.key, new Set());
+    contactMap.set(residue.key, new Map());
   });
 
   const atomProxyA = structure.getAtomProxy();
@@ -604,8 +656,8 @@ function computeResidueContacts(structure, residues) {
       }
 
       if (minDistance <= CONTACT_DISTANCE_CUTOFF) {
-        contactMap.get(resA.key).add(resB.key);
-        contactMap.get(resB.key).add(resA.key);
+        contactMap.get(resA.key).set(resB.key, minDistance);
+        contactMap.get(resB.key).set(resA.key, minDistance);
       }
     }
   }
@@ -614,35 +666,83 @@ function computeResidueContacts(structure, residues) {
 }
 
 
+function makePairKey(keyA, keyB) {
+  if (!keyA || !keyB) return `${keyA}|${keyB}`;
+  return keyA < keyB ? `${keyA}|${keyB}` : `${keyB}|${keyA}`;
+}
+
+function hasInteractionBetween(residueA, residueB) {
+  if (!residueA || !residueB) return false;
+  const pairKey = makePairKey(residueA.key, residueB.key);
+  if (interactionCache.has(pairKey)) {
+    return interactionCache.get(pairKey);
+  }
+
+  const interactions = [];
+  const involvedAtoms = new Set();
+  analyzeResiduePair(residueA, residueB, interactions, involvedAtoms);
+  const result = interactions.length > 0;
+  interactionCache.set(pairKey, result);
+  return result;
+}
+
+
 function applyResidueFilter() {
+  if (applyFilterTimeout) {
+    clearTimeout(applyFilterTimeout);
+    applyFilterTimeout = null;
+  }
+  const threshold = proximityThreshold || CONTACT_DISTANCE_CUTOFF;
+
   if (!residueDataset.list.length) {
-    SidePanel.applyFilter();
+    SidePanel.applyFilter(undefined, { proximity: new Set(), interaction: new Set(), threshold });
     return;
   }
 
-  if (!filterNeighborsEnabled || sidePanelSelection.size === 0) {
-    SidePanel.applyFilter();
+  const selection = sidePanelSelection;
+  const proximitySet = new Set();
+  const interactionSet = new Set();
+
+  if (selection.size > 0) {
+    selection.forEach((key) => {
+      const neighbors = residueDataset.contactMap.get(key);
+      if (!neighbors) return;
+      neighbors.forEach((distance, neighborKey) => {
+        if (distance <= threshold) {
+          proximitySet.add(neighborKey);
+          const residueA = residueDataset.map.get(key);
+          const residueB = residueDataset.map.get(neighborKey);
+          if (residueA && residueB && hasInteractionBetween(residueA, residueB)) {
+            interactionSet.add(neighborKey);
+          }
+        }
+      });
+    });
+  }
+
+  if (!filterNeighborsEnabled || selection.size === 0) {
+    SidePanel.applyFilter(undefined, { proximity: proximitySet, interaction: interactionSet, threshold });
     return;
   }
 
   const validResidues = new Set();
-  sidePanelSelection.forEach((key) => {
-    validResidues.add(key);
-    const neighbors = residueDataset.contactMap.get(key);
-    if (neighbors) {
-      neighbors.forEach((neighbor) => validResidues.add(neighbor));
-    }
-  });
+  selection.forEach((key) => validResidues.add(key));
+  proximitySet.forEach((key) => validResidues.add(key));
 
-  SidePanel.applyFilter(validResidues);
+  SidePanel.applyFilter(validResidues, { proximity: proximitySet, interaction: interactionSet, threshold });
 
   if (
     interactionResultsEl &&
     interactionResultsEl.dataset.state !== "results" &&
-    validResidues.size <= sidePanelSelection.size
+    selection.size > 0
   ) {
-    setInteractionMessage("No nearby residues found with current filter.", "info-warning");
-    SidePanel.announce("No interactions available.");
+    if (interactionSet.size === 0) {
+      const message = proximitySet.size === 0
+        ? `No residues within ${formatAngstroms(threshold)} of the current selection.`
+        : "No predicted interactions for the current selection at this threshold.";
+      setInteractionMessage(message, "info-warning");
+      SidePanel.announce("No interactions available.");
+    }
   }
 }
 
@@ -667,9 +767,10 @@ function resetAnalysisUI(message = "Choose residues above to analyze side-chain 
   lastHighlightSelection = null;
   clearInteractionVisuals();
   residueDataset = { list: [], map: new Map(), contactMap: new Map() };
+  interactionCache = new Map();
   SidePanel.renderResidueList([]);
   SidePanel.updateSelections([]);
-  SidePanel.applyFilter();
+  SidePanel.applyFilter(undefined, { proximity: new Set(), interaction: new Set(), threshold: proximityThreshold });
   setInteractionMessage(message, "info-default");
   SidePanel.announce(message);
 }
@@ -688,6 +789,7 @@ function updateSidePanelResidues(structure) {
 
   const dataset = createResidueDataset(structure);
   residueDataset = dataset;
+  interactionCache = new Map();
   sidePanelSelection = new Set();
   residueColorMap.clear();
   clearResidueVisuals();
