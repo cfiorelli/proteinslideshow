@@ -1,0 +1,17 @@
+{
+  "name": "proteinslideshow-share-assets",
+  "version": "1.0.0",
+  "description": "Tools to generate sharing assets (GIF + Open Graph image) for Protein Slideshow",
+  "main": "generate_gif.js",
+  "scripts": {
+    "make:gif": "node generate_gif.js",
+    "make:og": "node generate_og.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "gifencoder": "^2.0.1",
+    "pngjs": "^6.0.0",
+    "puppeteer": "^20.0.0"
+  }
+}
