@@ -5,24 +5,520 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Protein Slideshow</title>
   <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1221;
+      --panel: #131c33;
+      --accent: #38bdf8;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.45);
+      --glow: rgba(56, 189, 248, 0.12);
+      --toolbar-bg: rgba(15, 23, 42, 0.6);
+      --button-bg: rgba(148, 163, 184, 0.2);
+      --button-border: rgba(148, 163, 184, 0.2);
+      --toggle-active: rgba(56, 189, 248, 0.22);
+      --toggle-border: rgba(56, 189, 248, 0.55);
+    }
+
+    html, body {
+      height: 100%;
+      min-height: 100vh;
+      margin: 0;
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(120% 120% at 50% 10%, var(--glow) 0%, rgba(15, 23, 42, 0) 55%), var(--bg);
+      color: var(--text-primary);
+    }
+
+    body {
+      display: block;
+      overflow-y: auto;
+    }
+
+    .app-shell {
+      width: min(100%, 1400px);
+      margin: 0 auto;
+      padding: clamp(12px, 3vw, 28px) clamp(12px, 3.5vw, 40px);
+      display: flex;
+      flex-direction: column;
+      gap: clamp(20px, 3vw, 36px);
+      box-sizing: border-box;
+    }
+
+    .header {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      text-align: center;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 40px);
+      letter-spacing: 0.02em;
+    }
+
+    .header p {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: clamp(14px, 2vw, 18px);
+    }
+
+    .viewer-layout {
+      display: flex;
+      flex-direction: column;
+      gap: clamp(16px, 2vw, 24px);
+    }
+
+    @media (min-width: 1100px) {
+      .viewer-layout {
+        display: grid;
+        grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(220px, 260px);
+        gap: clamp(14px, 2vw, 24px);
+        align-items: stretch;
+      }
+    }
+
+    @media (min-width: 1500px) {
+      .app-shell {
+        width: min(100%, 1600px);
+      }
+      .viewer-layout {
+        grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 280px);
+        gap: clamp(18px, 2.5vw, 30px);
+      }
+    }
+
+    .info-panel,
+    .analysis-panel,
+    .viewer-panel {
+      background: var(--panel);
+      background-image: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0) 65%);
+      border-radius: clamp(16px, 3vw, 24px);
+      padding: clamp(16px, 3vw, 28px);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: clamp(12px, 2vw, 20px);
+      min-height: 0;
+    }
+
+    .info-panel,
+    .analysis-panel {
+      max-height: clamp(360px, 70vh, 760px);
+      overflow: hidden;
+    }
+
+    .info-panel-content,
+    .analysis-panel-content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
     .controls {
+      grid-area: controls;
       display: flex;
       justify-content: center;
-      margin-bottom: 10px;
+      gap: clamp(12px, 2vw, 24px);
+      flex-wrap: wrap;
     }
+
+    .toolbar {
+      grid-area: toolbar;
+      display: flex;
+      justify-content: center;
+      gap: clamp(16px, 2.5vw, 32px);
+      flex-wrap: wrap;
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--toolbar-bg);
+      border-radius: 999px;
+      padding: 6px 12px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+    }
+
+    .toolbar-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
     button {
-      margin: 0 10px;
+      background: var(--button-bg);
+      border: 1px solid var(--button-border);
+      color: var(--text-primary);
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-size: 15px;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: transform 150ms ease, background 150ms ease, border 150ms ease;
+    }
+
+    button:hover,
+    button:focus-visible {
+      background: var(--toggle-active);
+      border-color: var(--toggle-border);
+      transform: translateY(-1px);
+      outline: none;
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .toggle {
+      padding: 8px 16px;
+      font-size: 14px;
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .toggle.is-active {
+      background: var(--toggle-active);
+      border-color: var(--toggle-border);
+      color: var(--text-primary);
+    }
+
+    .model-name {
+      margin: 0;
+      font-size: clamp(18px, 2.4vw, 24px);
+      font-weight: 600;
+      text-align: center;
+      grid-area: title;
+      justify-self: center;
+    }
+
+    #viewport {
+      grid-area: viewport;
+      width: 100%;
+      height: clamp(360px, 55vh, 720px);
+      border-radius: clamp(12px, 2vw, 18px);
+      background: radial-gradient(circle at 25% 20%, rgba(56, 189, 248, 0.18), rgba(15, 23, 42, 0.9));
+      overflow: hidden;
+    }
+
+    .hint {
+      grid-area: hint;
+      margin: 0;
+      text-align: center;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .info-panel {
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .info-panel h4 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .metadata-content {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .metadata-figure {
+      margin: 0;
+      border-radius: clamp(10px, 2vw, 16px);
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: radial-gradient(circle at 25% 20%, rgba(56, 189, 248, 0.12), rgba(15, 23, 42, 0.85));
+      aspect-ratio: 4 / 3;
+    }
+
+    .metadata-figure img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .metadata-grid {
+      display: grid;
+      gap: 8px 16px;
+      grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1fr);
+      font-size: 14px;
+    }
+
+    .metadata-grid dt {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .metadata-grid dd {
+      margin: 0;
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .metadata-headline {
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .metadata-reference {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    .metadata-reference a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .metadata-reference a:hover,
+    .metadata-reference a:focus-visible {
+      text-decoration: underline;
+    }
+
+    .metadata-loading,
+    .metadata-error,
+    .metadata-placeholder {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .metadata-error {
+      color: #f87171;
+    }
+
+    .metadata-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .metadata-tag {
+      background: rgba(148, 163, 184, 0.18);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 999px;
+      font-size: 12px;
+      padding: 4px 10px;
+      color: var(--text-primary);
+      letter-spacing: 0.03em;
+    }
+
+    .analysis-panel {
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      gap: clamp(14px, 2vw, 20px);
+    }
+
+    .analysis-panel h4 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .analysis-panel h5 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .analysis-select {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .analysis-select label {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .analysis-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding: 10px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+    }
+
+    .analysis-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 4px 6px;
+      border-radius: 8px;
+      transition: background 120ms ease;
+    }
+
+    .analysis-item input[type="checkbox"] {
+      accent-color: var(--accent);
+    }
+
+    .analysis-item.is-selected {
+      background: rgba(56, 189, 248, 0.18);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .analysis-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .analysis-actions .analyze-button {
+      flex: 1 1 150px;
+      min-width: 150px;
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      font-weight: 600;
+    }
+
+    .analysis-actions .filter-button {
+      flex: 0 1 140px;
+      min-width: 140px;
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      font-weight: 500;
+    }
+
+    .analysis-actions .filter-button.is-active {
+      color: var(--accent);
+      border-color: rgba(56, 189, 248, 0.55);
+    }
+
+    .analysis-actions .analyze-button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .analysis-results {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+
+    .analysis-results ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-primary);
+    }
+
+    .analysis-results li {
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 0;
+      }
+
+      button {
+        flex: 1 1 120px;
+      }
+
+      .toolbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .toolbar-group {
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      #viewport {
+        height: clamp(320px, 55vh, 640px);
+      }
+
+      .info-panel,
+      .analysis-panel {
+        max-height: none;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="controls">
-    <button id="back">Back</button>
-    <button id="play-pause">Pause</button>
-    <button id="forward">Forward</button>
-  </div>
-<h3 id="model-name"></h3>
-<div id="viewport" style="width:600px; height:400px;"></div>
+  <main class="app-shell">
+    <header class="header">
+      <h1>Protein Slideshow</h1>
+      <p>Explore random biomolecular structures from the Protein Data Bank.</p>
+    </header>
+
+    <div class="viewer-layout">
+      <aside class="info-panel" id="metadata-panel">
+        <h4>Structure Details</h4>
+        <div class="info-panel-content" id="metadata-content">
+          <div class="metadata-placeholder">Metadata will appear here as structures load.</div>
+        </div>
+      </aside>
+
+      <section class="viewer-panel">
+        <div class="controls">
+          <button id="back">⟵ Back</button>
+          <button id="play-pause">Pause ❚❚</button>
+          <button id="forward">Forward ⟶</button>
+        </div>
+        <div class="toolbar">
+          <div class="toolbar-group" role="group" aria-label="Representation style">
+            <span class="toolbar-label">Style</span>
+            <button class="toggle is-active" data-representation="cartoon">Cartoon</button>
+            <button class="toggle" data-representation="surface">Surface</button>
+            <button class="toggle" data-representation="ball+stick">Ball &amp; Stick</button>
+          </div>
+          <div class="toolbar-group" role="group" aria-label="Stage Spin">
+            <span class="toolbar-label">Spin</span>
+            <button class="toggle" id="toggle-spin">Start Spin</button>
+          </div>
+        </div>
+        <h3 class="model-name" id="model-name"></h3>
+        <div id="viewport"></div>
+        <p class="hint">Tip: Space toggles play/pause, ← and → step through structures.</p>
+      </section>
+
+      <aside class="analysis-panel" id="analysis-panel">
+        <h4>Side-chain Interactions</h4>
+        <div class="analysis-panel-content">
+          <div class="analysis-select">
+            <label>Select 2–10 residues to compare:</label>
+            <div class="analysis-list" id="residue-list"></div>
+          </div>
+          <div class="analysis-actions">
+            <button id="analyze-interactions" class="analyze-button" type="button" disabled>Analyze Interactions</button>
+            <button id="toggle-filter" class="filter-button is-active" type="button">Filter Neighbors</button>
+          </div>
+          <div class="analysis-results" id="interaction-results">Choose residues above to analyze side-chain interactions.</div>
+        </div>
+      </aside>
+    </div>
+  </main>
   <script src="https://unpkg.com/ngl@2.0.0-dev.40/dist/ngl.js"></script>
   <script src="proteinslideshow.js"></script>
   </body>
