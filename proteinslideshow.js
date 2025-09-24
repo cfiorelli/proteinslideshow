@@ -166,13 +166,6 @@ const representationConfigs = {
   ],
   surface: [
     {
-      type: "cartoon",
-      params: {
-        sele: "polymer",
-        colorScheme: "chainname",
-      },
-    },
-    {
       type: "surface",
       params: {
         sele: "polymer",
