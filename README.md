@@ -70,3 +70,17 @@ Hover the metadata panel to see a rendered assembly preview, chain IDs, and prim
 ## License
 
 This project is provided as-is for personal and educational use. Consult the RCSB PDB [terms of use](https://www.rcsb.org/pages/policies) if you plan to deploy publicly.
+
+## Release notes & sharing
+
+- Release v1.1: Improved interaction highlighting and UX — selected residues that have predicted chemical interactions now retain the interaction highlight when selected. Helper text and page title were clarified for easier discovery.
+
+Suggested steps to go live and share:
+
+1. Confirm the site at the GitHub Pages URL (https://cfiorelli.github.io/proteinslideshow/) is rendering as expected (title, favicon, and helper text visible).
+2. Add a short blurb to your homepage linking to the demo and a screenshot or GIF of the interaction analysis in action.
+3. Share on LinkedIn with a concise summary; suggested copy:
+	"Just published an interactive Protein Side‑chain Interaction Explorer — explore residue proximity and predicted chemical contacts directly in the browser. Built with NGL and RCSB PDB data. Try it: https://cfiorelli.github.io/proteinslideshow/"
+4. Optionally pin the repo or add a README screenshot to increase discoverability.
+
+If you'd like, I can prepare a short GIF and an Open Graph image for social sharing as a follow-up.
