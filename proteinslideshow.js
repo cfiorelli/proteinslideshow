@@ -453,18 +453,18 @@ function updateRepresentationToggleState() {
 function applyCurrentRepresentation(options = {}) {
   if (!currentComponent) return;
 
-  if (options.rebuild || !representationHandles[currentRepresentationMode]) {
-    rebuildRepresentationHandles();
+  if (options.rebuild) {
+    rebuildRepresentationHandles(currentRepresentationMode);
   }
+
+  ensureRepresentationHandles(currentRepresentationMode);
 
   if (!representationHandles[currentRepresentationMode] || representationHandles[currentRepresentationMode].length === 0) {
     if (currentRepresentationMode !== "cartoon") {
       console.warn(`Falling back to cartoon representation after ${currentRepresentationMode} failure.`);
       currentRepresentationMode = "cartoon";
       updateRepresentationToggleState();
-    }
-    if (!representationHandles[currentRepresentationMode]) {
-      rebuildRepresentationHandles();
+      ensureRepresentationHandles(currentRepresentationMode);
     }
   }
 
@@ -486,39 +486,56 @@ function clearInteractionVisuals() {
   }
 }
 
-function rebuildRepresentationHandles() {
-  if (!currentComponent) return;
-  currentComponent.removeAllRepresentations();
-  representationHandles = {};
+function ensureRepresentationHandles(mode) {
+  if (!currentComponent || !mode) return;
+  if (representationHandles[mode] && representationHandles[mode].length) return;
 
-  Object.entries(representationConfigs).forEach(([mode, configs]) => {
-    const reps = [];
-    configs.forEach((config) => {
-      try {
-        const params = Object.assign({}, config.params || {});
-        if (mode !== currentRepresentationMode) {
-          params.visible = false;
-        }
-        const rep = currentComponent.addRepresentation(config.type, params);
-        reps.push(rep);
-      } catch (err) {
-        console.warn(`Failed to build ${mode} representation (${config.type})`, err);
-      }
-    });
-    representationHandles[mode] = reps;
+  const reps = [];
+  const configs = representationConfigs[mode] || [];
+  configs.forEach((config) => {
+    try {
+      const params = Object.assign({}, config.params || {});
+      params.visible = mode === currentRepresentationMode;
+      const rep = currentComponent.addRepresentation(config.type, params);
+      reps.push(rep);
+    } catch (err) {
+      console.warn(`Failed to build ${mode} representation (${config.type})`, err);
+    }
   });
 
-  if (!representationHandles.cartoon || representationHandles.cartoon.length === 0) {
-    representationHandles.cartoon = [
-      currentComponent.addRepresentation("cartoon", {
+  if (reps.length === 0 && mode === "cartoon") {
+    try {
+      reps.push(currentComponent.addRepresentation("cartoon", {
         sele: "polymer",
         colorScheme: "chainname",
         aspectRatio: 3,
-        visible: currentRepresentationMode === "cartoon",
-      }),
-    ];
+        visible: mode === currentRepresentationMode,
+      }));
+    } catch (err) {
+      console.warn("Failed to create fallback cartoon representation", err);
+    }
   }
 
+  representationHandles[mode] = reps;
+}
+
+function rebuildRepresentationHandles(mode) {
+  if (!currentComponent || !mode) return;
+
+  if (representationHandles[mode]) {
+    representationHandles[mode].forEach((rep) => {
+      if (rep && typeof rep.dispose === "function") {
+        try {
+          rep.dispose();
+        } catch (err) {
+          /* noop */
+        }
+      }
+    });
+    delete representationHandles[mode];
+  }
+
+  ensureRepresentationHandles(mode);
   setRepresentationVisibility(currentRepresentationMode);
   updateSelectionHighlight(undefined, { force: true });
 }
