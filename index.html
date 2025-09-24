@@ -145,6 +145,25 @@
       border: 1px solid rgba(148, 163, 184, 0.16);
     }
 
+    .toolbar-search {
+      background: rgba(15, 23, 42, 0.7);
+      gap: 6px;
+    }
+
+    .toolbar-search input {
+      width: 100px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 999px;
+      padding: 6px 12px;
+      color: var(--text-primary);
+      font-size: 14px;
+    }
+
+    .toolbar-search input::placeholder {
+      color: var(--text-secondary);
+    }
+
     .toolbar-label {
       font-size: 13px;
       font-weight: 600;
@@ -342,6 +361,7 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      margin-top: 12px;
     }
 
     .analysis-select label {
@@ -353,12 +373,14 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
-      max-height: 180px;
+      max-height: 200px;
       overflow-y: auto;
       padding: 10px;
       background: rgba(15, 23, 42, 0.6);
       border: 1px solid rgba(148, 163, 184, 0.2);
       border-radius: 12px;
+      list-style: none;
+      margin: 0;
     }
 
     .analysis-item {
@@ -369,6 +391,7 @@
       padding: 4px 6px;
       border-radius: 8px;
       transition: background 120ms ease;
+      position: relative;
     }
 
     .analysis-item input[type="checkbox"] {
@@ -381,33 +404,97 @@
       font-weight: 600;
     }
 
+    .muted {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background: rgba(15, 23, 42, 0.25);
+    }
+
     .analysis-actions {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
+      margin-top: 12px;
     }
 
     .analysis-actions .analyze-button {
       flex: 1 1 150px;
-      min-width: 150px;
+      min-width: 140px;
+      padding: 8px 14px;
       background: var(--accent);
       color: #0f172a;
       border: none;
       font-weight: 600;
     }
 
-    .analysis-actions .filter-button {
-      flex: 0 1 140px;
-      min-width: 140px;
+    .analysis-actions .filter-button,
+    .analysis-actions .clear-button {
+      flex: 0 1 auto;
+      min-width: 110px;
+      padding: 6px 12px;
+      font-size: 12px;
       background: transparent;
       color: var(--text-secondary);
       border: 1px solid rgba(148, 163, 184, 0.3);
       font-weight: 500;
+      line-height: 1.2;
     }
 
     .analysis-actions .filter-button.is-active {
       color: var(--accent);
       border-color: rgba(56, 189, 248, 0.55);
+    }
+
+    .analysis-actions .clear-button {
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.45);
+    }
+
+    .analysis-actions .clear-button:hover,
+    .analysis-actions .clear-button:focus-visible {
+      color: #fca5a5;
+      border-color: rgba(248, 113, 113, 0.65);
+      background: rgba(248, 113, 113, 0.12);
+    }
+
+    .analysis-jump {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .analysis-jump label {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .analysis-jump-controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .analysis-jump-controls input {
+      flex: 1 1 180px;
+      min-width: 160px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: var(--text-primary);
+      font-size: 14px;
+    }
+
+    .analysis-jump-controls input::placeholder {
+      color: var(--text-secondary);
+    }
+
+    .analysis-jump-controls button {
+      flex: 0 0 auto;
+      min-width: 88px;
+      padding: 6px 12px;
+      font-size: 12px;
     }
 
     .analysis-actions .analyze-button:disabled {
@@ -419,10 +506,11 @@
       background: rgba(15, 23, 42, 0.5);
       border-radius: 12px;
       border: 1px solid rgba(148, 163, 184, 0.12);
-      padding: 12px;
+      padding: 10px 12px;
       font-size: 13px;
       line-height: 1.6;
       color: var(--text-secondary);
+      margin-top: 8px;
     }
 
     .analysis-results ul {
@@ -433,6 +521,44 @@
 
     .analysis-results li {
       margin-bottom: 6px;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .item {
+      position: relative;
+    }
+
+    .item .tip {
+      position: absolute;
+      left: 100%;
+      top: 50%;
+      transform: translateY(-50%);
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 150ms ease;
+      font-size: 0.75rem;
+      background: #111827;
+      color: #e5e7eb;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.375rem;
+      margin-left: 0.5rem;
+      pointer-events: none;
+    }
+
+    .item[aria-disabled="true"]:hover .tip,
+    .item[aria-disabled="true"]:focus-within .tip {
+      opacity: 1;
     }
 
     @media (max-width: 600px) {
@@ -452,6 +578,16 @@
       .toolbar-group {
         flex-wrap: wrap;
         justify-content: center;
+      }
+
+      .toolbar-search {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .toolbar-search input {
+        flex: 1 1 auto;
+        width: auto;
       }
 
       #viewport {
@@ -497,6 +633,11 @@
             <span class="toolbar-label">Spin</span>
             <button class="toggle" id="toggle-spin">Start Spin</button>
           </div>
+          <div class="toolbar-group toolbar-search" role="group" aria-label="Load specific protein">
+            <span class="toolbar-label">Load PDB</span>
+            <input id="pdb-search-input" type="text" placeholder="1CRN" autocomplete="off" />
+            <button class="toggle" id="pdb-search-button" type="button">Load</button>
+          </div>
         </div>
         <h3 class="model-name" id="model-name"></h3>
         <div id="viewport"></div>
@@ -505,21 +646,31 @@
 
       <aside class="analysis-panel" id="analysis-panel">
         <h4>Side-chain Interactions</h4>
+        <div id="live-region" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         <div class="analysis-panel-content">
-          <div class="analysis-select">
-            <label>Select 2–10 residues to compare:</label>
-            <div class="analysis-list" id="residue-list"></div>
+          <div class="analysis-jump">
+            <label for="residue-jump-input">Quick load a residue</label>
+            <div class="analysis-jump-controls">
+              <input id="residue-jump-input" type="text" placeholder="ALA A265" autocomplete="off" />
+              <button id="residue-jump-button" type="button">Load</button>
+            </div>
           </div>
+          <div class="analysis-select">
+            <span>Select 2–10 residues to compare:</span>
+            <ul class="analysis-list" id="residue-list" role="listbox" aria-label="Side chains"></ul>
+          </div>
+          <div class="analysis-results" id="interaction-results">Choose residues above to analyze side-chain interactions.</div>
           <div class="analysis-actions">
             <button id="analyze-interactions" class="analyze-button" type="button" disabled>Analyze Interactions</button>
             <button id="toggle-filter" class="filter-button is-active" type="button">Filter Neighbors</button>
+            <button id="clear-selections" class="clear-button" type="button">Clear Selections</button>
           </div>
-          <div class="analysis-results" id="interaction-results">Choose residues above to analyze side-chain interactions.</div>
         </div>
       </aside>
     </div>
   </main>
   <script src="https://unpkg.com/ngl@2.0.0-dev.40/dist/ngl.js"></script>
+  <script src="sidepanel.js"></script>
   <script src="proteinslideshow.js"></script>
   </body>
   <!-- v4 -->

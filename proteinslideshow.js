@@ -82,11 +82,10 @@ const backButton = document.getElementById("back");
 const forwardButton = document.getElementById("forward");
 const metadataContentEl = document.getElementById("metadata-content");
 const representationButtons = Array.from(document.querySelectorAll("[data-representation]"));
-const residueListEl = document.getElementById("residue-list");
-const analyzeButton = document.getElementById("analyze-interactions");
+const pdbSearchInput = document.getElementById("pdb-search-input");
+const pdbSearchButton = document.getElementById("pdb-search-button");
 const interactionResultsEl = document.getElementById("interaction-results");
 const toggleSpinButton = document.getElementById("toggle-spin");
-const toggleFilterButton = document.getElementById("toggle-filter");
 
 if (interactionResultsEl && !interactionResultsEl.dataset.state) {
   interactionResultsEl.dataset.state = "info-default";
@@ -98,15 +97,11 @@ let currentRepresentationMode = "cartoon";
 let currentStructure = null;
 let interactionShapeComponent = null;
 let lastHighlightSelection = null;
-let selectedResidueIndices = new Set();
 let isSpinning = false;
 let representationHandles = {};
-let residueDataMap = new Map();
-let residueContactMap = new Map();
-let residueListElements = new Map();
+let residueDataset = { list: [], map: new Map(), contactMap: new Map() };
 let residueColorMap = new Map();
 let selectedResidueVisuals = new Map();
-let filterNeighbors = true;
 let focusTimeout = null;
 
 const HIGHLIGHT_COLORS = [
@@ -239,25 +234,34 @@ representationButtons.forEach((button) => {
   });
 });
 
-if (analyzeButton) {
-  analyzeButton.addEventListener("click", handleAnalyzeInteractions);
+function handleDirectLoad(pdbId) {
+  const trimmed = (pdbId || "").trim().toUpperCase();
+  if (!trimmed) return;
+  if (!/^[0-9A-Z]{4}$/.test(trimmed)) {
+    SidePanel.announce(`"${pdbId}" is not a valid 4-character PDB ID.`);
+    return;
+  }
+  if (stage) {
+    stage.setSpin(null);
+  }
+  loadProteinStructure(trimmed);
 }
 
-if (toggleSpinButton) {
-  toggleSpinButton.addEventListener("click", toggleSpin);
-}
-updateSpinControlUI();
-updateSpinState();
-
-if (toggleFilterButton) {
-  toggleFilterButton.addEventListener("click", () => {
-    filterNeighbors = !filterNeighbors;
-    updateFilterButton();
-    updateResidueFilter();
-    updateSelectionUIState();
+if (pdbSearchButton) {
+  pdbSearchButton.addEventListener("click", () => {
+    const value = pdbSearchInput ? pdbSearchInput.value : "";
+    handleDirectLoad(value);
   });
 }
-updateFilterButton();
+
+if (pdbSearchInput) {
+  pdbSearchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      handleDirectLoad(pdbSearchInput.value);
+    }
+  });
+}
 
 updateRepresentationToggleState();
 
@@ -278,6 +282,47 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+const analysisPanelEl = document.getElementById("analysis-panel");
+const SidePanel = window.SidePanel;
+if (!SidePanel || typeof SidePanel.init !== "function") {
+  throw new Error("SidePanel namespace missing. Ensure sidepanel.js is loaded before proteinslideshow.js.");
+}
+SidePanel.init(analysisPanelEl);
+
+let sidePanelSelection = new Set();
+let filterNeighborsEnabled = true;
+
+analysisPanelEl.addEventListener("sidepanel:residueSelected", (event) => {
+  const detail = event.detail || {};
+  const { selected, selectedResidues = [], accepted = true, reason } = detail;
+  if (accepted === false) {
+    if (reason === "limit") {
+      setInteractionMessage("Maximum of 10 residues reached. Deselect one before adding another.", "info-warning");
+    } else if (reason === "disabled") {
+      setInteractionMessage("No interactions available with current selection.", "info-warning");
+    }
+    applyResidueFilter();
+    return;
+  }
+  const selection = new Set(selectedResidues);
+  handleSidePanelSelectionChange(selection, { focus: Boolean(selected) });
+});
+
+analysisPanelEl.addEventListener("sidepanel:analyze", () => {
+  handleAnalyzeInteractions(sidePanelSelection);
+});
+
+analysisPanelEl.addEventListener("sidepanel:filterToggle", (event) => {
+  const { enabled } = event.detail || {};
+  filterNeighborsEnabled = enabled !== false;
+  applyResidueFilter();
+});
+
+if (toggleSpinButton) {
+  toggleSpinButton.addEventListener("click", toggleSpin);
+}
+updateSpinControlUI();
+updateSpinState();
 
 function moveForward() {
   stage.setSpin(null); // stop spinning
@@ -351,7 +396,7 @@ function applyCurrentRepresentation(options = {}) {
   }
 
   setRepresentationVisibility(currentRepresentationMode);
-  updateSelectionHighlight({ force: true });
+  updateSelectionHighlight(undefined, { force: true });
   if (stage.viewer && typeof stage.viewer.requestRender === "function") {
     stage.viewer.requestRender();
   }
@@ -402,7 +447,7 @@ function rebuildRepresentationHandles() {
   }
 
   setRepresentationVisibility(currentRepresentationMode);
-  updateSelectionHighlight({ force: true });
+  updateSelectionHighlight(undefined, { force: true });
 }
 
 function setRepresentationVisibility(activeMode) {
@@ -506,40 +551,40 @@ function createResidueVisuals(residueData, color) {
   return { representation, label };
 }
 
-function updateResidueCheckboxStyles() {
-  residueListElements.forEach(({ wrapper, checkbox }) => {
-    wrapper.classList.toggle("is-selected", checkbox.checked);
-  });
-}
-
-function buildResidueCache(structure) {
-  residueDataMap = new Map();
-  residueContactMap = new Map();
+function createResidueDataset(structure) {
+  const residues = [];
+  const map = new Map();
 
   structure.eachResidue((residue) => {
     if (!residue.isProtein()) return;
     const data = buildResidueData(structure, residue.index);
-    residueDataMap.set(residue.index, data);
+    map.set(data.key, data);
+    residues.push(data);
   });
 
-  computeResidueContacts(structure);
+  residues.sort((a, b) => {
+    if (a.chain === b.chain) return a.resno - b.resno;
+    return a.chain.localeCompare(b.chain);
+  });
+
+  const contactMap = computeResidueContacts(structure, residues);
+  return { list: residues, map, contactMap };
 }
 
-function computeResidueContacts(structure) {
-  residueContactMap = new Map();
-  const dataArray = Array.from(residueDataMap.values());
+function computeResidueContacts(structure, residues) {
+  const contactMap = new Map();
 
-  dataArray.forEach((residue) => {
-    residueContactMap.set(residue.residueIndex, new Set());
+  residues.forEach((residue) => {
+    contactMap.set(residue.key, new Set());
   });
 
   const atomProxyA = structure.getAtomProxy();
   const atomProxyB = structure.getAtomProxy();
 
-  for (let i = 0; i < dataArray.length; i += 1) {
-    for (let j = i + 1; j < dataArray.length; j += 1) {
-      const resA = dataArray[i];
-      const resB = dataArray[j];
+  for (let i = 0; i < residues.length; i += 1) {
+    for (let j = i + 1; j < residues.length; j += 1) {
+      const resA = residues[i];
+      const resB = residues[j];
 
       const atomsA = resA.sideChainAtoms.length ? resA.sideChainAtoms : resA.allAtomIndices;
       const atomsB = resB.sideChainAtoms.length ? resB.sideChainAtoms : resB.allAtomIndices;
@@ -559,55 +604,45 @@ function computeResidueContacts(structure) {
       }
 
       if (minDistance <= CONTACT_DISTANCE_CUTOFF) {
-        residueContactMap.get(resA.residueIndex).add(resB.residueIndex);
-        residueContactMap.get(resB.residueIndex).add(resA.residueIndex);
+        contactMap.get(resA.key).add(resB.key);
+        contactMap.get(resB.key).add(resA.key);
       }
     }
   }
+
+  return contactMap;
 }
 
-function updateResidueFilter() {
-  if (!residueListEl) return;
-  const showAll = !filterNeighbors || selectedResidueIndices.size === 0;
-  const allowed = new Set();
-  let visibleCount = 0;
 
-  if (showAll) {
-    residueListElements.forEach((_, index) => {
-      allowed.add(index);
-    });
-  } else {
-    selectedResidueIndices.forEach((index) => {
-      allowed.add(index);
-      const neighbors = residueContactMap.get(index);
-      if (neighbors) {
-        neighbors.forEach((neighbor) => allowed.add(neighbor));
-      }
-    });
+function applyResidueFilter() {
+  if (!residueDataset.list.length) {
+    SidePanel.applyFilter();
+    return;
   }
 
-  residueListElements.forEach(({ wrapper, checkbox }, index) => {
-    const isSelected = selectedResidueIndices.has(index);
-    const visible = showAll ? true : allowed.has(index) || isSelected;
+  if (!filterNeighborsEnabled || sidePanelSelection.size === 0) {
+    SidePanel.applyFilter();
+    return;
+  }
 
-    wrapper.style.display = visible ? "flex" : "none";
-    wrapper.classList.toggle("is-filtered", !visible);
-    checkbox.disabled = !visible && !isSelected;
-    if (visible) visibleCount += 1;
+  const validResidues = new Set();
+  sidePanelSelection.forEach((key) => {
+    validResidues.add(key);
+    const neighbors = residueDataset.contactMap.get(key);
+    if (neighbors) {
+      neighbors.forEach((neighbor) => validResidues.add(neighbor));
+    }
   });
 
-  updateResidueCheckboxStyles();
+  SidePanel.applyFilter(validResidues);
 
   if (
-    filterNeighbors &&
-    selectedResidueIndices.size > 0 &&
     interactionResultsEl &&
-    interactionResultsEl.dataset.state !== "results"
+    interactionResultsEl.dataset.state !== "results" &&
+    validResidues.size <= sidePanelSelection.size
   ) {
-    const selectedCount = selectedResidueIndices.size;
-    if (visibleCount <= selectedCount) {
-      setInteractionMessage("No nearby residues found with current filter.", "info-warning");
-    }
+    setInteractionMessage("No nearby residues found with current filter.", "info-warning");
+    SidePanel.announce("No interactions available.");
   }
 }
 
@@ -625,29 +660,18 @@ function scheduleFocus(selection) {
   }, 200);
 }
 
-function updateFilterButton() {
-  if (!toggleFilterButton) return;
-  toggleFilterButton.textContent = filterNeighbors ? "Filter Neighbors" : "Show All Residues";
-  toggleFilterButton.classList.toggle("is-active", filterNeighbors);
-}
-
-function clearAnalysisUI(message = "Choose residues above to analyze side-chain interactions.") {
-  selectedResidueIndices.clear();
+function resetAnalysisUI(message = "Choose residues above to analyze side-chain interactions.") {
+  sidePanelSelection = new Set();
   residueColorMap.clear();
-  residueListElements.clear();
   clearResidueVisuals();
   lastHighlightSelection = null;
   clearInteractionVisuals();
-  residueDataMap = new Map();
-  residueContactMap = new Map();
-
-  if (residueListEl) {
-    residueListEl.innerHTML = "";
-  }
-  if (analyzeButton) {
-    analyzeButton.disabled = true;
-  }
+  residueDataset = { list: [], map: new Map(), contactMap: new Map() };
+  SidePanel.renderResidueList([]);
+  SidePanel.updateSelections([]);
+  SidePanel.applyFilter();
   setInteractionMessage(message, "info-default");
+  SidePanel.announce(message);
 }
 
 function setInteractionMessage(message, state = "info-default") {
@@ -656,134 +680,55 @@ function setInteractionMessage(message, state = "info-default") {
   interactionResultsEl.dataset.state = state;
 }
 
-function populateResidueList(structure) {
-  if (!residueListEl) return;
-  residueListEl.innerHTML = "";
-  residueListElements.clear();
+function updateSidePanelResidues(structure) {
+  if (!structure) {
+    resetAnalysisUI("Load a structure before analysis.");
+    return;
+  }
+
+  const dataset = createResidueDataset(structure);
+  residueDataset = dataset;
+  sidePanelSelection = new Set();
   residueColorMap.clear();
   clearResidueVisuals();
-  selectedResidueIndices.clear();
   lastHighlightSelection = null;
   clearInteractionVisuals();
 
-  if (!structure) {
-    if (analyzeButton) analyzeButton.disabled = true;
-    setInteractionMessage("Load a structure before analysis.", "info-default");
+  if (!dataset.list.length) {
+    resetAnalysisUI("No protein residues available for analysis in this structure.");
     return;
   }
 
-  buildResidueCache(structure);
-
-  const residues = Array.from(residueDataMap.values()).sort((a, b) => {
-    if (a.chain === b.chain) return a.resno - b.resno;
-    return a.chain.localeCompare(b.chain);
-  });
-
-  if (!residues.length) {
-    if (analyzeButton) analyzeButton.disabled = true;
-    setInteractionMessage("No protein residues available for analysis in this structure.", "info-default");
-    return;
-  }
-
-  residues.forEach((residue) => {
-    const labelEl = document.createElement("label");
-    labelEl.className = "analysis-item";
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.dataset.residueIndex = String(residue.residueIndex);
-    checkbox.addEventListener("change", handleResidueToggleChange);
-
-    const textSpan = document.createElement("span");
-    textSpan.textContent = residue.label;
-
-    labelEl.appendChild(checkbox);
-    labelEl.appendChild(textSpan);
-    residueListEl.appendChild(labelEl);
-
-    residueListElements.set(residue.residueIndex, {
-      wrapper: labelEl,
-      checkbox,
-      text: textSpan,
-    });
-  });
-
-  updateResidueFilter();
-  updateSelectionUIState();
+  SidePanel.renderResidueList(dataset.list);
+  SidePanel.updateSelections([]);
+  applyResidueFilter();
+  setInteractionMessage("Choose residues above to analyze side-chain interactions.", "info-default");
+  SidePanel.announce(`${dataset.list.length} residues available for analysis.`);
 }
 
-function handleResidueToggleChange(event) {
-  const checkbox = event.target;
-  if (!checkbox || !checkbox.dataset.residueIndex) return;
-  const residueIndex = parseInt(checkbox.dataset.residueIndex, 10);
-  if (Number.isNaN(residueIndex)) return;
 
-  if (checkbox.checked) {
-    if (selectedResidueIndices.size >= 10) {
-      checkbox.checked = false;
-      setInteractionMessage("Maximum of 10 residues reached. Deselect one before adding another.", "info-warning");
-      return;
-    }
-    selectedResidueIndices.add(residueIndex);
-  } else {
-    selectedResidueIndices.delete(residueIndex);
-  }
 
-  const elements = residueListElements.get(residueIndex);
-  if (elements) {
-    elements.wrapper.classList.toggle("is-selected", checkbox.checked);
-  }
+function handleSidePanelSelectionChange(selectedSet = new Set(), { focus = false } = {}) {
+  const selection = selectedSet instanceof Set ? new Set(selectedSet) : new Set(selectedSet);
+  sidePanelSelection = selection;
+  SidePanel.updateSelections(selection);
+  updateSelectionHighlight(selection, { focusOn: focus });
 
-  const focusOn = checkbox.checked;
-  updateSelectionHighlight({ focusOn });
-
-  if (
-    interactionResultsEl &&
-    interactionResultsEl.dataset.state === "results" &&
-    selectedResidueIndices.size >= 2 &&
-    selectedResidueIndices.size <= 10
-  ) {
+  if (!selection.size) {
+    setInteractionMessage("Choose residues above to analyze side-chain interactions.", "info-default");
+  } else if (selection.size < 2) {
+    setInteractionMessage("Select between 2 and 10 residues before analyzing.", "info-default");
+  } else if (selection.size > 10) {
+    setInteractionMessage("Select between 2 and 10 residues before analyzing.", "info-warning");
+  } else if (interactionResultsEl && interactionResultsEl.dataset.state === "results") {
     setInteractionMessage("Selection changed. Click Analyze to refresh interactions.", "info-dirty");
   }
 
-  updateResidueFilter();
-  updateSelectionUIState();
+  applyResidueFilter();
 }
 
-function updateSelectionUIState() {
-  const count = selectedResidueIndices.size;
-  if (analyzeButton) {
-    analyzeButton.disabled = count < 2 || count > 10;
-  }
-  if (!interactionResultsEl) return;
-
-  const preserveWarning =
-    interactionResultsEl.dataset.state === "info-warning" &&
-    filterNeighbors &&
-    count >= 1 &&
-    count <= 10 &&
-    interactionResultsEl.textContent.startsWith("No nearby residues");
-
-  if (preserveWarning && count >= 1) {
-    return;
-  }
-
-  if (count === 0) {
-    setInteractionMessage("Select 2–10 residues to compare.", "info-default");
-  } else if (count === 1) {
-    setInteractionMessage("Select at least one more residue.", "info-default");
-  } else if (count > 10) {
-    setInteractionMessage("Please deselect residues until you have 10 or fewer selected.", "info-warning");
-  } else if (
-    interactionResultsEl.dataset.state !== "results" &&
-    interactionResultsEl.dataset.state !== "info-dirty"
-  ) {
-    setInteractionMessage("Click Analyze to inspect interactions between the selected residues.", "info-ready");
-  }
-}
-
-function updateSelectionHighlight({ focusOn = false, force = false } = {}) {
-  if (!currentStructure) {
+function updateSelectionHighlight(selectedSet, { focusOn = false, force = false } = {}) {
+  if (!currentStructure || !currentComponent) {
     clearResidueVisuals();
     lastHighlightSelection = null;
     return;
@@ -793,59 +738,63 @@ function updateSelectionHighlight({ focusOn = false, force = false } = {}) {
     clearResidueVisuals();
   }
 
-  const selectionParts = [];
-  Array.from(selectedResidueVisuals.keys()).forEach((index) => {
-    if (!selectedResidueIndices.has(index)) {
-      removeResidueVisual(index);
+  const selectionSet = selectedSet ? new Set(selectedSet) : new Set();
+
+  Array.from(selectedResidueVisuals.keys()).forEach((id) => {
+    if (!selectionSet.has(id)) {
+      removeResidueVisual(id);
     }
   });
 
-  selectedResidueIndices.forEach((index) => {
-    const residueData = residueDataMap.get(index) || buildResidueData(currentStructure, index);
+  const selectionParts = [];
+
+  selectionSet.forEach((id) => {
+    const residueData = residueDataset.map.get(id);
     if (!residueData) return;
 
-    if (!residueColorMap.has(index)) {
+    if (!residueColorMap.has(id)) {
       const color = HIGHLIGHT_COLORS[residueColorMap.size % HIGHLIGHT_COLORS.length];
-      residueColorMap.set(index, color);
+      residueColorMap.set(id, color);
     }
 
-    if (!selectedResidueVisuals.has(index)) {
-      const color = residueColorMap.get(index);
+    if (!selectedResidueVisuals.has(id) || force) {
+      const color = residueColorMap.get(id);
       const visuals = createResidueVisuals(residueData, color);
-      selectedResidueVisuals.set(index, visuals);
+      selectedResidueVisuals.set(id, visuals);
     }
 
     selectionParts.push(residueData.selectionString);
   });
 
-  updateResidueCheckboxStyles();
-
-  if (selectionParts.length === 0) {
-    lastHighlightSelection = null;
-    return;
-  }
-
-  lastHighlightSelection = selectionParts.join(" OR ");
+  lastHighlightSelection = selectionParts.length ? selectionParts.join(" OR ") : null;
 
   if (focusOn && lastHighlightSelection) {
     scheduleFocus(lastHighlightSelection);
   }
 }
 
-function handleAnalyzeInteractions() {
+function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
   if (!interactionResultsEl || !currentComponent) return;
   if (!currentStructure) {
     setInteractionMessage("Load a structure before running the analysis.", "info-default");
     return;
   }
 
-  const residueIndices = Array.from(selectedResidueIndices);
-  if (residueIndices.length < 2 || residueIndices.length > 10) {
-    updateSelectionUIState();
+  const residueIds = Array.from(selectedSet || new Set());
+  if (residueIds.length < 2 || residueIds.length > 10) {
+    setInteractionMessage("Select between 2 and 10 residues before analyzing.", "info-default");
     return;
   }
 
-  const residueData = residueIndices.map((index) => residueDataMap.get(index) || buildResidueData(currentStructure, index));
+  const residueData = residueIds
+    .map((id) => residueDataset.map.get(id))
+    .filter(Boolean);
+
+  if (residueData.length < 2) {
+    setInteractionMessage("Unable to resolve residue data for the current selection.", "info-warning");
+    return;
+  }
+
   const interactions = [];
   const involvedAtoms = new Set();
 
@@ -865,7 +814,7 @@ async function loadProteinStructure(pdbId) {
   stage.removeAllComponents();
   currentComponent = null;
   currentStructure = null;
-  clearAnalysisUI("Loading structure; residue list will appear shortly.");
+  resetAnalysisUI("Loading structure; residue list will appear shortly.");
 
   updateMetadataPanel(pdbId);
 
@@ -907,7 +856,12 @@ async function loadProteinStructure(pdbId) {
       updateSpinState();
       logShownEntity(pdbId);
       modelNameEl.textContent = `Model: ${pdbId}`;
-      populateResidueList(currentStructure);
+      try {
+        updateSidePanelResidues(currentStructure);
+      } catch (panelError) {
+        console.error(`Loaded ${pdbId} but failed to update side panel`, panelError);
+        resetAnalysisUI("Residue list unavailable for this structure.");
+      }
       return;
     } catch (err) {
       lastError = err;
@@ -917,7 +871,7 @@ async function loadProteinStructure(pdbId) {
 
   console.error(`Failed to load structure ${pdbId} from all sources.`, lastError);
   modelNameEl.textContent = `Model: ${pdbId} (failed to load)`;
-  clearAnalysisUI("Unable to analyze until a structure loads successfully.");
+  resetAnalysisUI("Unable to analyze until a structure loads successfully.");
   if (lastError && lastError.message && /CORS|cross-origin|NetworkError/i.test(lastError.message)) {
     console.warn("Possible CORS or network error when loading structure. Check console and server CORS headers.");
   }
@@ -1009,7 +963,12 @@ function buildResidueData(structure, residueIndex) {
     sideChainAtoms.push(...atomIndicesByName.get("CA"));
   }
 
+  const chainName = residue.chainname || "";
+  const key = `${chainName}${residue.resno}`;
+
   return {
+    id: key,
+    key,
     structure,
     residueIndex,
     resname: residue.resname.toUpperCase(),
