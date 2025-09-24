@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Protein Slideshow</title>
+  <title>Protein Side-chain Interaction Explorer</title>
   <link rel="icon" href="favicon.png">
   <style>
     :root {
@@ -683,8 +683,8 @@
 <body>
   <main class="app-shell">
     <header class="header">
-      <h1>Protein Slideshow</h1>
-      <p>Explore random biomolecular structures from the Protein Data Bank.</p>
+        <h1>Protein Side-chain Interaction Explorer</h1>
+        <p>Explore residue proximity and predicted side‑chain interactions in structures from the Protein Data Bank. Use the proximity slider and side‑chain selector to highlight nearby residues and analyze chemical contacts.</p>
     </header>
 
     <div class="viewer-layout">
@@ -738,7 +738,7 @@
           <div class="analysis-select">
             <ul class="analysis-list" id="residue-list" role="listbox" aria-label="Side chains"></ul>
           </div>
-          <div class="analysis-results" id="interaction-results">Analysis results will show here. Procedure: Set your desired proximity. Select a residue of interest. If interactions are available, they will be highlighted in green. Select interacting residues and click Analyze to see chemical interactions.</div>
+          <div class="analysis-results" id="interaction-results">How to use: 1) Set the proximity threshold (Å). 2) Select a side chain — nearby residues within the threshold will be highlighted blue. 3) If any nearby residues have predicted chemical interactions with your selection they will be highlighted green. Select interacting residues and click Analyze to see details.</div>
           <div class="analysis-actions">
             <button id="analyze-interactions" class="analyze-button" type="button" disabled>Analyze Interactions</button>
             <button id="clear-selections" class="clear-button" type="button">Clear Selections</button>

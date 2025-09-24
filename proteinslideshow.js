@@ -124,6 +124,31 @@ if (interactionResultsEl && !interactionResultsEl.dataset.state) {
 }
 
 let metadataRequestToken = 0;
+let structureRequestToken = 0;
+// Current active load session. Each load creates a new session object so async
+// steps (fetches, parsing) can check session.id and can be aborted via AbortController.
+let currentLoadSession = null;
+
+function createLoadSession(pdbId) {
+  // abort previous session controllers
+  if (currentLoadSession && Array.isArray(currentLoadSession.controllers)) {
+    currentLoadSession.controllers.forEach((c) => {
+      try {
+        if (c && typeof c.abort === 'function') c.abort();
+      } catch (e) {
+        // ignore
+      }
+    });
+  }
+
+  const session = {
+    id: ++structureRequestToken,
+    pdbId,
+    controllers: [], // AbortController instances for network work in this session
+  };
+  currentLoadSession = session;
+  return session;
+}
 let currentComponent = null;
 let currentRepresentationMode = "cartoon";
 let currentStructure = null;
@@ -140,6 +165,7 @@ let interactionCache = new Map();
 let applyFilterTimeout = null;
 
 const FILTER_DEBOUNCE_MS = 75;
+const DEFAULT_ANALYSIS_MESSAGE = "Analysis results will show here. Procedure: Set your desired proximity. Select a residue of interest. If interactions are available, they will be highlighted in green. Select interacting residues and click Analyze to see chemical interactions.";
 
 const HIGHLIGHT_COLORS = [
   "#f97316",
@@ -363,7 +389,6 @@ if (!SidePanel || typeof SidePanel.init !== "function") {
 SidePanel.init(analysisPanelEl);
 
 let sidePanelSelection = new Set();
-let filterNeighborsEnabled = true;
 
 analysisPanelEl.addEventListener("sidepanel:residueSelected", (event) => {
   const detail = event.detail || {};
@@ -380,15 +405,8 @@ analysisPanelEl.addEventListener("sidepanel:residueSelected", (event) => {
   const selection = new Set(selectedResidues);
   handleSidePanelSelectionChange(selection, { focus: Boolean(selected) });
 });
-
 analysisPanelEl.addEventListener("sidepanel:analyze", () => {
   handleAnalyzeInteractions(sidePanelSelection);
-});
-
-analysisPanelEl.addEventListener("sidepanel:filterToggle", (event) => {
-  const { enabled } = event.detail || {};
-  filterNeighborsEnabled = enabled !== false;
-  applyResidueFilter();
 });
 
 if (toggleSpinButton) {
@@ -758,7 +776,7 @@ function applyResidueFilter() {
     });
   }
 
-  if (!filterNeighborsEnabled || selection.size === 0) {
+  if (selection.size === 0) {
     SidePanel.applyFilter(undefined, { proximity: proximitySet, interaction: interactionSet, threshold });
     return;
   }
@@ -798,7 +816,7 @@ function scheduleFocus(selection) {
   }, 200);
 }
 
-function resetAnalysisUI(message = "Choose residues above to analyze side-chain interactions.") {
+function resetAnalysisUI(message = DEFAULT_ANALYSIS_MESSAGE) {
   sidePanelSelection = new Set();
   residueColorMap.clear();
   clearResidueVisuals();
@@ -842,7 +860,7 @@ function updateSidePanelResidues(structure) {
   SidePanel.renderResidueList(dataset.list);
   SidePanel.updateSelections([]);
   applyResidueFilter();
-  setInteractionMessage("Choose residues above to analyze side-chain interactions.", "info-default");
+  setInteractionMessage(DEFAULT_ANALYSIS_MESSAGE, "info-default");
   SidePanel.announce(`${dataset.list.length} residues available for analysis.`);
 }
 
@@ -855,7 +873,7 @@ function handleSidePanelSelectionChange(selectedSet = new Set(), { focus = false
   updateSelectionHighlight(selection, { focusOn: focus });
 
   if (!selection.size) {
-    setInteractionMessage("Choose residues above to analyze side-chain interactions.", "info-default");
+    setInteractionMessage(DEFAULT_ANALYSIS_MESSAGE, "info-default");
   } else if (selection.size < 2) {
     setInteractionMessage("Select between 2 and 10 residues before analyzing.", "info-default");
   } else if (selection.size > 10) {
@@ -949,6 +967,8 @@ function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
 }
 
 async function loadProteinStructure(pdbId) {
+  const session = createLoadSession(pdbId);
+  const myLoadToken = session.id;
   const modelNameEl = document.getElementById("model-name");
   modelNameEl.textContent = `Model: ${pdbId}`;
   stage.removeAllComponents();
@@ -956,7 +976,7 @@ async function loadProteinStructure(pdbId) {
   currentStructure = null;
   resetAnalysisUI("Loading structure; residue list will appear shortly.");
 
-  updateMetadataPanel(pdbId);
+  updateMetadataPanel(pdbId, myLoadToken, session);
 
   const sources = [
     {
@@ -987,7 +1007,20 @@ async function loadProteinStructure(pdbId) {
   for (const source of sources) {
     modelNameEl.textContent = `Model: ${pdbId} (loading ${source.label}...)`;
     try {
-      const structureComponent = await fetchAndLoadStructure(pdbId, source);
+      const structureComponent = await fetchAndLoadStructure(pdbId, source, session);
+      // If another load was started since we began, drop this stale component.
+      if (myLoadToken !== structureRequestToken) {
+        console.warn(`Stale structure load for ${pdbId} - discarding component`);
+        try {
+          if (structureComponent && typeof structureComponent.remove === 'function') {
+            structureComponent.remove();
+          }
+        } catch (remErr) {
+          console.warn('Failed to remove stale structure component:', remErr);
+        }
+        return;
+      }
+
       currentComponent = structureComponent;
       currentStructure = structureComponent.structure;
       representationHandles = {};
@@ -1017,8 +1050,13 @@ async function loadProteinStructure(pdbId) {
   }
 }
 
-async function fetchAndLoadStructure(pdbId, source) {
-  const response = await fetch(source.url);
+async function fetchAndLoadStructure(pdbId, source, session) {
+  const controller = new AbortController();
+  // attach controller to provided session if available
+  if (session && Array.isArray(session.controllers)) {
+    session.controllers.push(controller);
+  }
+  const response = await fetch(source.url, { signal: controller.signal });
   if (!response.ok) {
     const body = await response.text().catch(() => "(no body)");
     throw new Error(`HTTP ${response.status} ${response.statusText}: ${body}`);
@@ -1064,18 +1102,24 @@ function makeFileLike(arrayBuffer, filename, mime) {
   return blob;
 }
 
-function updateMetadataPanel(pdbId) {
+function updateMetadataPanel(pdbId, loadToken, session) {
   if (!metadataContentEl) return;
-  const token = ++metadataRequestToken;
+  const token = typeof loadToken === 'number' ? loadToken : ++metadataRequestToken;
   setMetadataMessage(`Loading details for ${escapeHtml(pdbId)}…`, "metadata-loading");
 
-  fetchEntryMetadata(pdbId)
+  // create an AbortController for this metadata fetch and attach it to the session
+  const controller = new AbortController();
+  if (session && Array.isArray(session.controllers)) session.controllers.push(controller);
+
+  fetchEntryMetadata(pdbId, { signal: controller.signal })
     .then((metadata) => {
-      if (token !== metadataRequestToken) return; // stale request
+      if (token !== structureRequestToken) return; // stale request
+      if (currentLoadSession && session && session.id !== currentLoadSession.id) return; // stale session
       renderMetadata(metadata);
     })
     .catch((err) => {
-      if (token !== metadataRequestToken) return;
+      if (token !== structureRequestToken) return;
+      if (err && err.name === 'AbortError') return; // aborted intentionally
       console.error(`Error fetching metadata for ${pdbId}:`, err);
       setMetadataMessage("Unable to load metadata right now. Try again later.", "metadata-error");
     });
@@ -1273,17 +1317,18 @@ function updateInteractionVisuals(residueData, interactions, involvedAtoms) {
   interactionShapeComponent.addRepresentation("buffer");
 }
 
-async function fetchEntryMetadata(pdbId) {
+async function fetchEntryMetadata(pdbId, options = {}) {
   const entryUrl = `https://data.rcsb.org/rest/v1/core/entry/${pdbId}`;
-  const entryData = await fetchJson(entryUrl, `entry metadata for ${pdbId}`);
+  const entryData = await fetchJson(entryUrl, `entry metadata for ${pdbId}`, options);
 
   let polymerData;
   const polymerIds = entryData?.rcsb_entry_container_identifiers?.polymer_entity_ids || [];
   if (polymerIds.length > 0) {
     const polymerUrl = `https://data.rcsb.org/rest/v1/core/polymer_entity/${pdbId}/${polymerIds[0]}`;
     try {
-      polymerData = await fetchJson(polymerUrl, `polymer metadata for ${pdbId}`);
+      polymerData = await fetchJson(polymerUrl, `polymer metadata for ${pdbId}`, options);
     } catch (err) {
+      if (err && err.name === 'AbortError') return null;
       console.warn(`Unable to fetch polymer metadata for ${pdbId}:`, err);
     }
   }
@@ -1293,8 +1338,9 @@ async function fetchEntryMetadata(pdbId) {
   if (assemblyIds.length > 0) {
     const assemblyUrl = `https://data.rcsb.org/rest/v1/core/assembly/${pdbId}/${assemblyIds[0]}`;
     try {
-      assemblyData = await fetchJson(assemblyUrl, `assembly metadata for ${pdbId}`);
+      assemblyData = await fetchJson(assemblyUrl, `assembly metadata for ${pdbId}`, options);
     } catch (err) {
+      if (err && err.name === 'AbortError') return null;
       console.warn(`Unable to fetch assembly metadata for ${pdbId}:`, err);
     }
   }
@@ -1346,8 +1392,10 @@ async function fetchEntryMetadata(pdbId) {
   };
 }
 
-async function fetchJson(url, label) {
-  const response = await fetch(url);
+async function fetchJson(url, label, options = {}) {
+  const fetchOpts = {};
+  if (options.signal) fetchOpts.signal = options.signal;
+  const response = await fetch(url, fetchOpts);
   if (!response.ok) {
     const body = await response.text().catch(() => "(no body)");
     throw new Error(`HTTP ${response.status} ${response.statusText} when fetching ${label}: ${body}`);
