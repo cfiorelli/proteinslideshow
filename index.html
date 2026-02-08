@@ -853,8 +853,34 @@
       display: flex;
       flex-direction: column;
       gap: 5px;
-      max-height: 200px;
+      max-height: 300px;
       overflow-y: auto;
+    }
+    .stability-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+      line-height: 1.4;
+    }
+    .stability-table th {
+      text-align: left;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+      padding: 3px 5px;
+      border-bottom: 1px solid var(--panel-border);
+      white-space: nowrap;
+    }
+    .stability-table td {
+      padding: 3px 5px;
+      color: var(--text-primary);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+      white-space: nowrap;
+    }
+    .stability-table tbody tr:hover {
+      background: rgba(56, 189, 248, 0.06);
     }
     .stability-scale {
       position: relative;
@@ -1102,6 +1128,10 @@
             <button id="clear-selections" class="btn-danger" type="button">Clear</button>
             <span class="limitations-tip" data-tip="Water-mediated and &pi;-stacking not detected" tabindex="0">&#x26A0;</span>
           </div>
+          <div class="action-row">
+            <button id="stability-toggle" class="btn-accent" type="button" disabled
+              title="Select 2+ residues to enable">Stability Sweep</button>
+          </div>
 
           <div class="analysis-results" id="interaction-results">Select 2&ndash;10 residues, then Analyze.</div>
 
@@ -1112,17 +1142,11 @@
             <span class="legend-item"><span class="legend-swatch" style="background:#facc15"></span>S&ndash;S</span>
           </div>
 
-          <div class="action-row">
-            <button id="stability-toggle" class="btn-accent" type="button" disabled
-              title="Sweep distance cutoff across detected interactions to assess persistence ranges">Stability Sweep</button>
-          </div>
-
           <div class="stability-explorer" id="stability-explorer" hidden>
             <h5>Stability Sweep</h5>
-            <p class="stability-hint">Sweeps cutoff 2&ndash;6.5&Aring; to show where each interaction appears/disappears.</p>
             <div class="stability-sweep-controls">
               <label for="sweep-slider">Cutoff <span id="sweep-value">2.0&Aring;</span></label>
-              <input id="sweep-slider" type="range" min="2.0" max="6.5" step="0.1" value="2.0" />
+              <input id="sweep-slider" type="range" min="2.0" max="10.0" step="0.1" value="2.0" />
               <div class="stability-sweep-buttons">
                 <button id="sweep-play" class="tb-btn" type="button">&#x25B6; Animate</button>
                 <button id="sweep-reset" class="tb-btn" type="button">Reset</button>
