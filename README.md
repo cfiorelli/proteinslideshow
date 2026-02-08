@@ -1,86 +1,74 @@
-# Protein Slideshow
+# Protein Side-chain Interaction Explorer
 
-A lightweight browser viewer that cycles through random structures from the RCSB Protein Data Bank. Structures are rendered with [NGL](https://github.com/nglviewer/ngl) and enriched with live metadata so you can explore experimental details without leaving the page.
+A browser-based tool for exploring residue proximity and side-chain interactions in PDB structures. Built with [NGL](https://github.com/nglviewer/ngl) and RCSB PDB data.
 
-## Features
-
-- **Random slideshow** of 15 PDB IDs at a time, refreshed automatically.
-- **Robust structure loading**: tries gzipped CIF, raw CIF, then PDB files to avoid format/CORS quirks.
-- **Metadata side panel** with experiment method, resolution, chains, symmetry, annotations, and primary literature links.
-- **Representation controls** (Cartoon, Surface, Ball & Stick) for quick visual changes.
-- **Side panel quick-load** for jumping straight to any residue label (e.g. `ALA A265`).
-- **Proximity threshold slider** (1–5 Å) that instantly rehydrates the contact map and highlights reachable residues.
-- **Interaction-aware highlighting**: blue tags for residues within range, green tags for residues predicted to form an interaction at the current threshold.
-- **Lightweight analysis** that detects hydrogen bonds, salt bridges, ionic contacts, and disulfide bonds between 2–10 selected residues.
-- **Keyboard shortcuts**: `Space` toggles play/pause, `←` / `→` step backward/forward.
-- **Responsive layout** that keeps the stage centered and metadata readable on phones and desktops.
-- **Optimised navigation** with tuned NGL stage parameters for smoother zooming and panning.
-
-## Getting Started
+## Run locally
 
 ```bash
+# Option A: Python static server (no install needed)
+python3 -m http.server 8765
+# Then open http://localhost:8765
+
+# Option B: Node dev proxy (if you need CORS proxy for development)
 npm install
 npm start
+# Opens at http://localhost:8080
 ```
 
-The dev proxy in `dev-proxy.js` serves `index.html` at `http://localhost:8000/` and forwards API requests so the browser can reach RCSB endpoints.
+No build step required. For GitHub Pages, commit the static files and enable Pages on the `main` branch.
 
-### Building for GitHub Pages
+## How it works
 
-No build step is required. Commit the static files (`index.html`, `proteinslideshow.js`, `dev-proxy.js`, etc.) and enable GitHub Pages on the `main` branch. The site will be available at:
+1. On load, the app fetches and renders **6LYZ** (lysozyme) as the default structure.
+2. Select **2–10 residues** from the side panel, then click **Analyze** to detect side-chain contacts.
+3. Use the **Stability** button to sweep distance cutoffs and assess interaction robustness.
 
-```
-https://<your-username>.github.io/proteinslideshow/
-```
+## Interaction types
 
-## Controls & UI
+| Type | Cutoff | Atoms |
+| --- | --- | --- |
+| Hydrogen bond | ≤ 3.5 Å | Donor–acceptor pairs (see `HYDROGEN_DONOR_MAP` / `HYDROGEN_ACCEPTOR_MAP`) |
+| Salt bridge | ≤ 4.0 Å | Charged side-chain atoms (ARG/LYS/HIS vs ASP/GLU) |
+| Ionic interaction | ≤ 6.0 Å | Same atom pairs as salt bridge, wider cutoff |
+| Disulfide bond | ≤ 2.2 Å | CYS SG – CYS SG |
+
+**Limitations:** Water-mediated contacts and π-stacking interactions are not detected. Only side-chain atoms are considered (backbone excluded).
+
+## Controls
 
 | Action | How |
 | --- | --- |
-| Play / pause | Click the Play/Pause button or press `Space` |
-| Next / previous structure | Click `Forward` / `Back` or press `→` / `←` |
-| Change representation | Use the **Style** pill buttons (Cartoon / Surface / Ball & Stick) |
-| Toggle spin | Click the **Spin** button (Stop/Start) in the toolbar |
-| Load a specific PDB | Use the **Load PDB** field in the toolbar and enter a four-character ID |
-| Quick-load a residue | Use the **Quick load a residue** field (accepts labels like `ALA A265`) |
-| Adjust proximity cutoff | Drag the **Proximity threshold** slider (1–5 Å) |
-| Analyze interactions | Pick 2–10 residues in **Side-chain Interactions** and click **Analyze** |
-| Filter residue list | Click **Filter Neighbors** to toggle between contacts-only and full residue lists |
+| Load a PDB | Enter a 4-character ID in the header search box and click **Load** |
+| Navigate structures | **←** / **→** buttons or arrow keys; **⏸** / **▶** for slideshow |
+| Change representation | **Cartoon** / **Surface** / **Ball+Stick** in the toolbar |
+| Toggle spin | **Spin** button in toolbar |
+| Search residues | Type in the residue search box (e.g., `ALA A42`, `CYS 64`) |
+| Adjust proximity | Drag the threshold slider (1–5 Å) |
+| Analyze interactions | Select 2–10 residues, click **Analyze** |
+| Stability sweep | After Analyze, click **Stability** to see persistence ranges |
+| Focus camera | Click **Focus** to re-center on selected residues |
+| Debug logging | Append `?debug=1` to the URL for verbose console output |
 
-### Reading the residue list
+## Troubleshooting
 
-- **Selected residues**: solid blue highlight.
-- **In proximity**: light blue tag + “In proximity” label, indicating the residue sits within the current Å cutoff but is not predicted to interact.
-- **Interaction available**: green highlighting + “Interaction available” label, indicating at least one predicted contact with the current selection at the active threshold.
+**Blank viewer / nothing loads:**
+- Check the browser console for errors. The most common cause is a network issue fetching from `files.rcsb.org`.
+- Try appending `?debug=1` to the URL — this enables detailed logging of every load step.
+- If 6LYZ fails, the app automatically tries 1CRN as a fallback.
 
-Hover the metadata panel to see a rendered assembly preview, chain IDs, and primary citation details. Links to DOIs open in a new tab.
+**Metadata panel empty:**
+- Metadata is fetched from `data.rcsb.org`. If the API is down or blocked, the panel shows "Metadata unavailable."
 
-## Project Structure
+**Selection visuals disappear when switching representation:**
+- This was a known bug (fixed). If you see it, please file an issue.
 
-- `index.html` – Page layout, styling, and UI controls.
-- `proteinslideshow.js` – Slideshow logic, NGL integration, metadata fetching, and UI event handlers.
-- `dev-proxy.js` – Simple Express proxy for local development.
-- `package.json` – Scripts and dependencies.
+## Project structure
 
-## Notes
-
-- RCSB occasionally rotates or removes structures. If a structure fails every format, the UI logs the error and continues with the next ID.
-- The metadata panel fetches both entry-wide and polymer-entity data, plus assembly symmetry when available. If any API call fails, the panel shows a friendly fallback message.
+- `index.html` – Layout, styling, and UI controls (single file).
+- `proteinslideshow.js` – Core logic: NGL viewer, load pipeline, interaction detection, stability explorer.
+- `sidepanel.js` – Side panel state management (residue list, filtering, selection events).
+- `dev-proxy.js` – Express CORS proxy for local development.
 
 ## License
 
-This project is provided as-is for personal and educational use. Consult the RCSB PDB [terms of use](https://www.rcsb.org/pages/policies) if you plan to deploy publicly.
-
-## Release notes & sharing
-
-- Release v1.1: Improved interaction highlighting and UX — selected residues that have predicted chemical interactions now retain the interaction highlight when selected. Helper text and page title were clarified for easier discovery.
-
-Suggested steps to go live and share:
-
-1. Confirm the site at the GitHub Pages URL (https://cfiorelli.github.io/proteinslideshow/) is rendering as expected (title, favicon, and helper text visible).
-2. Add a short blurb to your homepage linking to the demo and a screenshot or GIF of the interaction analysis in action.
-3. Share on LinkedIn with a concise summary; suggested copy:
-	"Just published an interactive Protein Side‑chain Interaction Explorer — explore residue proximity and predicted chemical contacts directly in the browser. Built with NGL and RCSB PDB data. Try it: https://cfiorelli.github.io/proteinslideshow/"
-4. Optionally pin the repo or add a README screenshot to increase discoverability.
-
-If you'd like, I can prepare a short GIF and an Open Graph image for social sharing as a follow-up.
+This project is provided as-is for personal and educational use. See RCSB PDB [terms of use](https://www.rcsb.org/pages/policies).
