@@ -50,6 +50,13 @@ function generateRandomIndices(count, max) {
 
 const FALLBACK_PDB = "1CRN";
 
+function setStatus(text, status) {
+  const badge = document.getElementById("status-badge");
+  if (!badge) return;
+  badge.textContent = text;
+  badge.dataset.status = status || "";
+}
+
 // Load DEFAULT_PDB immediately, then fetch PDB list in background for slideshow nav.
 async function initSlideshow() {
   dbg("initSlideshow: loading DEFAULT_PDB", DEFAULT_PDB);
@@ -528,7 +535,7 @@ initSlideshow();
 
 function togglePlayPause() {
   isPaused = !isPaused;
-  playPauseButton.textContent = isPaused ? "Play ▶" : "Pause ❚❚";
+  if (playPauseButton) playPauseButton.innerHTML = isPaused ? "&#x25B6;" : "&#x23F8;";
   if (isPaused) {
     clearInterval(intervalHandle);
   } else {
@@ -670,8 +677,8 @@ function updateSpinState() {
 
 function updateSpinControlUI() {
   if (!toggleSpinButton) return;
-  toggleSpinButton.textContent = isSpinning ? "Stop Spin" : "Start Spin";
-  toggleSpinButton.classList.toggle("is-active", !isSpinning);
+  toggleSpinButton.textContent = isSpinning ? "Stop" : "Spin";
+  toggleSpinButton.classList.toggle("is-active", isSpinning);
 }
 
 function clearResidueVisuals() {
@@ -1082,6 +1089,7 @@ function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
 
 async function loadProteinStructure(pdbId) {
   dbg("loadProteinStructure: start", pdbId);
+  setStatus("Loading", "loading");
   const session = createLoadSession(pdbId);
   const myLoadToken = session.id;
   const modelNameEl = document.getElementById("model-name");
@@ -1147,6 +1155,7 @@ async function loadProteinStructure(pdbId) {
       updateSpinState();
       logShownEntity(pdbId);
       if (modelNameEl) modelNameEl.textContent = pdbId;
+      setStatus("Ready", "ready");
       try {
         updateSidePanelResidues(currentStructure);
         dbg("loadProteinStructure: side panel updated, residues:", residueDataset.list.length);
@@ -1164,6 +1173,7 @@ async function loadProteinStructure(pdbId) {
   // All sources failed
   console.error(`Failed to load ${pdbId} from all sources.`, lastError);
   if (modelNameEl) modelNameEl.textContent = `${pdbId} (failed)`;
+  setStatus("Error", "error");
   resetAnalysisUI("Load failed.");
   throw lastError || new Error(`All sources failed for ${pdbId}`);
 }

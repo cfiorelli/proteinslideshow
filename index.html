@@ -118,6 +118,31 @@
       width: 100%;
     }
 
+    .status-badge {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(34, 197, 94, 0.2);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      white-space: nowrap;
+    }
+
+    .status-badge[data-status="loading"] {
+      background: rgba(250, 204, 21, 0.15);
+      color: #facc15;
+      border-color: rgba(250, 204, 21, 0.4);
+    }
+
+    .status-badge[data-status="error"] {
+      background: rgba(248, 113, 113, 0.15);
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.4);
+    }
+
     .help-drawer.is-open {
       display: block;
     }
@@ -175,14 +200,6 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-    }
-
-    .controls {
-      grid-area: controls;
-      display: flex;
-      justify-content: center;
-      gap: clamp(8px, 1.6vw, 20px);
-      flex-wrap: wrap;
     }
 
     .toolbar {
@@ -904,13 +921,17 @@
   <main class="app-shell">
     <header class="header">
         <h1>Interaction Explorer <span class="header-model" id="model-name"></span></h1>
+        <span class="status-badge" id="status-badge">Ready</span>
         <div class="header-search">
           <input id="pdb-search-input" type="text" placeholder="PDB ID" autocomplete="off" />
           <button class="toggle" id="pdb-search-button" type="button">Load</button>
           <button class="help-toggle toggle" id="help-toggle" type="button" title="Help">?</button>
         </div>
         <div class="help-drawer" id="help-drawer">
-          Select 2–10 residues, then click <strong>Analyze</strong> to detect side-chain contacts (H-bond ≤3.5 Å, salt bridge ≤4.0 Å, ionic ≤6.0 Å, disulfide ≤2.2 Å). Green = interacting residue. Blue = proximity only. Adjust the proximity slider to widen/narrow the neighborhood. ← → step through structures. Space toggles play/pause.
+          Select 2–10 residues, then <strong>Analyze</strong> to detect side-chain contacts.<br>
+          H-bond &le;3.5&Aring; &middot; Salt bridge &le;4.0&Aring; &middot; Ionic &le;6.0&Aring; &middot; Disulfide &le;2.2&Aring;<br>
+          Green = interacting &middot; Blue = in proximity &middot; Limits: no water-mediated or &pi;-stacking.<br>
+          &larr; &rarr; step structures &middot; Space = play/pause &middot; Proximity slider adjusts neighborhood.
         </div>
     </header>
 
@@ -918,26 +939,25 @@
       <aside class="info-panel" id="metadata-panel">
         <h4>Structure Details</h4>
         <div class="info-panel-content" id="metadata-content">
-          <div class="metadata-placeholder">Metadata will appear here as structures load.</div>
+          <div class="metadata-placeholder">Loading…</div>
         </div>
       </aside>
 
       <section class="viewer-panel">
-        <div class="controls">
-          <button id="back">⟵ Back</button>
-          <button id="play-pause">Pause ❚❚</button>
-          <button id="forward">Forward ⟶</button>
-        </div>
         <div class="toolbar">
+          <div class="toolbar-group" role="group" aria-label="Navigate structures">
+            <button class="toggle" id="back" title="Previous structure">&larr;</button>
+            <button class="toggle" id="play-pause" title="Pause slideshow">&#x23F8;</button>
+            <button class="toggle" id="forward" title="Next structure">&rarr;</button>
+          </div>
           <div class="toolbar-group" role="group" aria-label="Representation style">
             <span class="toolbar-label">Style</span>
             <button class="toggle is-active" data-representation="cartoon">Cartoon</button>
             <button class="toggle" data-representation="surface">Surface</button>
-            <button class="toggle" data-representation="ball+stick">Ball &amp; Stick</button>
+            <button class="toggle" data-representation="ball+stick">Ball+Stick</button>
           </div>
           <div class="toolbar-group" role="group" aria-label="Stage Spin">
-            <span class="toolbar-label">Spin</span>
-            <button class="toggle" id="toggle-spin">Start Spin</button>
+            <button class="toggle" id="toggle-spin">Spin</button>
           </div>
         </div>
         <div id="viewport"></div>
