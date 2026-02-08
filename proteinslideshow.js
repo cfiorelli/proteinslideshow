@@ -184,7 +184,7 @@ let isSweeping = false;
 let lastAnalyzedInteractions = [];
 
 const FILTER_DEBOUNCE_MS = 75;
-const DEFAULT_ANALYSIS_MESSAGE = "Select a residue to explore nearby chemical interactions. Residues highlighted green have predicted interactions with your selection.";
+const DEFAULT_ANALYSIS_MESSAGE = "Select 2\u201310 residues, then Analyze.";
 
 // Consistent color semantics:
 // Blue = explicitly selected residue (3D view)
@@ -376,6 +376,17 @@ if (pdbSearchInput) {
     }
   });
 }
+
+// Help drawer toggle
+(function () {
+  const helpBtn = document.getElementById("help-toggle");
+  const helpDrawer = document.getElementById("help-drawer");
+  if (helpBtn && helpDrawer) {
+    helpBtn.addEventListener("click", () => {
+      helpDrawer.classList.toggle("is-open");
+    });
+  }
+})();
 
 updateRepresentationToggleState();
 
@@ -1046,7 +1057,7 @@ async function loadProteinStructure(pdbId) {
   const session = createLoadSession(pdbId);
   const myLoadToken = session.id;
   const modelNameEl = document.getElementById("model-name");
-  modelNameEl.textContent = `Model: ${pdbId}`;
+  modelNameEl.textContent = pdbId;
   stage.removeAllComponents();
   currentComponent = null;
   currentStructure = null;
@@ -1081,7 +1092,7 @@ async function loadProteinStructure(pdbId) {
   let lastError = null;
 
   for (const source of sources) {
-    modelNameEl.textContent = `Model: ${pdbId} (loading ${source.label}...)`;
+    modelNameEl.textContent = `${pdbId} (loading...)`;
     try {
       const structureComponent = await fetchAndLoadStructure(pdbId, source, session);
       // If another load was started since we began, drop this stale component.
@@ -1105,7 +1116,7 @@ async function loadProteinStructure(pdbId) {
       structureComponent.autoView();
       updateSpinState();
       logShownEntity(pdbId);
-      modelNameEl.textContent = `Model: ${pdbId}`;
+      modelNameEl.textContent = pdbId;
       try {
         updateSidePanelResidues(currentStructure);
       } catch (panelError) {
@@ -1120,7 +1131,7 @@ async function loadProteinStructure(pdbId) {
   }
 
   console.error(`Failed to load structure ${pdbId} from all sources.`, lastError);
-  modelNameEl.textContent = `Model: ${pdbId} (failed to load)`;
+  modelNameEl.textContent = `${pdbId} (failed)`;
   resetAnalysisUI("Unable to analyze until a structure loads successfully.");
   if (lastError && lastError.message && /CORS|cross-origin|NetworkError/i.test(lastError.message)) {
     console.warn("Possible CORS or network error when loading structure. Check console and server CORS headers.");

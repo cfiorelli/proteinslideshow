@@ -59,21 +59,67 @@
 
     .header {
       display: flex;
-      flex-direction: column;
-      gap: 6px;
-      text-align: center;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .header h1 {
       margin: 0;
-      font-size: clamp(24px, 3.4vw, 34px);
+      font-size: clamp(15px, 2.2vw, 20px);
       letter-spacing: 0.015em;
+      white-space: nowrap;
     }
 
-    .header p {
-      margin: 0;
+    .header-model {
+      font-weight: 400;
       color: var(--text-secondary);
-      font-size: clamp(12px, 1.8vw, 15px);
+      font-size: clamp(13px, 1.8vw, 16px);
+    }
+
+    .header-search {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-left: auto;
+    }
+
+    .header-search input {
+      width: 80px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 999px;
+      padding: 5px 10px;
+      color: var(--text-primary);
+      font-size: 12px;
+    }
+
+    .header-search input::placeholder {
+      color: var(--text-secondary);
+    }
+
+    .help-toggle {
+      padding: 4px 8px;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      min-width: 0;
+    }
+
+    .help-drawer {
+      display: none;
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      padding: 8px 10px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 6px;
+      width: 100%;
+    }
+
+    .help-drawer.is-open {
+      display: block;
     }
 
     .viewer-layout {
@@ -157,25 +203,6 @@
       border: 1px solid rgba(71, 85, 105, 0.45);
     }
 
-    .toolbar-search {
-      background: rgba(15, 23, 42, 0.7);
-      gap: 6px;
-    }
-
-    .toolbar-search input {
-      width: 90px;
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid rgba(148, 163, 184, 0.3);
-      border-radius: 999px;
-      padding: 5px 10px;
-      color: var(--text-primary);
-      font-size: 12px;
-    }
-
-    .toolbar-search input::placeholder {
-      color: var(--text-secondary);
-    }
-
     .toolbar-label {
       font-size: 12px;
       font-weight: 600;
@@ -220,15 +247,6 @@
       color: var(--text-primary);
     }
 
-    .model-name {
-      margin: 0;
-      font-size: clamp(16px, 2vw, 22px);
-      font-weight: 600;
-      text-align: center;
-      grid-area: title;
-      justify-self: center;
-    }
-
     #viewport {
       grid-area: viewport;
       width: 100%;
@@ -236,14 +254,6 @@
       border-radius: clamp(10px, 1.8vw, 16px);
       background: radial-gradient(circle at 25% 20%, rgba(56, 189, 248, 0.18), rgba(15, 23, 42, 0.9));
       overflow: hidden;
-    }
-
-    .hint {
-      grid-area: hint;
-      margin: 0;
-      text-align: center;
-      font-size: 12px;
-      color: var(--text-secondary);
     }
 
     .info-panel {
@@ -610,16 +620,34 @@
       margin-bottom: 4px;
     }
 
-    /* Instructional hint */
-    .analysis-guide {
+    /* Limitations tooltip */
+    .limitations-tip {
+      position: relative;
+      cursor: help;
+    }
+
+    .limitations-tip::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: var(--text-primary);
       font-size: 11px;
-      color: var(--text-secondary);
-      line-height: 1.4;
-      padding: 6px 8px;
-      background: rgba(56, 189, 248, 0.06);
-      border: 1px solid rgba(56, 189, 248, 0.15);
+      padding: 6px 10px;
       border-radius: 6px;
-      margin: 0;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 150ms ease;
+      z-index: 10;
+    }
+
+    .limitations-tip:hover::after,
+    .limitations-tip:focus-visible::after {
+      opacity: 1;
     }
 
     /* Interaction types legend */
@@ -694,13 +722,6 @@
     .stability-explorer h5 {
       color: var(--accent);
       margin: 0 0 4px;
-    }
-
-    .stability-hint {
-      font-size: 11px;
-      color: var(--text-secondary);
-      line-height: 1.4;
-      margin: 0 0 10px;
     }
 
     .stability-sweep-controls {
@@ -863,16 +884,6 @@
         justify-content: center;
       }
 
-      .toolbar-search {
-        width: 100%;
-        justify-content: center;
-      }
-
-      .toolbar-search input {
-        flex: 1 1 auto;
-        width: auto;
-      }
-
       #viewport {
         height: clamp(320px, 55vh, 640px);
       }
@@ -892,8 +903,15 @@
 <body>
   <main class="app-shell">
     <header class="header">
-        <h1>Protein Side-chain Interaction Explorer</h1>
-        <p>Explore residue proximity and predicted side‑chain interactions in structures from the Protein Data Bank. Use the proximity slider and side‑chain selector to highlight nearby residues and analyze chemical contacts.</p>
+        <h1>Interaction Explorer <span class="header-model" id="model-name"></span></h1>
+        <div class="header-search">
+          <input id="pdb-search-input" type="text" placeholder="PDB ID" autocomplete="off" />
+          <button class="toggle" id="pdb-search-button" type="button">Load</button>
+          <button class="help-toggle toggle" id="help-toggle" type="button" title="Help">?</button>
+        </div>
+        <div class="help-drawer" id="help-drawer">
+          Select 2–10 residues, then click <strong>Analyze</strong> to detect side-chain contacts (H-bond ≤3.5 Å, salt bridge ≤4.0 Å, ionic ≤6.0 Å, disulfide ≤2.2 Å). Green = interacting residue. Blue = proximity only. Adjust the proximity slider to widen/narrow the neighborhood. ← → step through structures. Space toggles play/pause.
+        </div>
     </header>
 
     <div class="viewer-layout">
@@ -921,23 +939,15 @@
             <span class="toolbar-label">Spin</span>
             <button class="toggle" id="toggle-spin">Start Spin</button>
           </div>
-          <div class="toolbar-group toolbar-search" role="group" aria-label="Load specific protein">
-            <span class="toolbar-label">Load PDB</span>
-            <input id="pdb-search-input" type="text" placeholder="1CRN" autocomplete="off" />
-            <button class="toggle" id="pdb-search-button" type="button">Load</button>
-          </div>
         </div>
-        <h3 class="model-name" id="model-name"></h3>
         <div id="viewport"></div>
-        <p class="hint">Tip: Space toggles play/pause, ← and → step through structures.</p>
       </section>
 
       <aside class="analysis-panel" id="analysis-panel">
         <h4>Side-chain Interactions</h4>
         <div id="live-region" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         <div class="analysis-panel-content">
-          <h5 class="analysis-title">Residue Selection</h5>
-          <p class="analysis-guide">Select a residue to explore nearby chemical interactions. Residues within the proximity threshold appear blue; those with predicted interactions appear green.</p>
+          <h5 class="analysis-title">Residues</h5>
           <div class="analysis-search">
             <input id="residue-search-input" type="search" placeholder="Search residues (e.g. ALA A42)..." autocomplete="off" />
           </div>
@@ -948,7 +958,7 @@
           <div class="analysis-select">
             <ul class="analysis-list" id="residue-list" role="listbox" aria-label="Side chains"></ul>
           </div>
-          <div class="analysis-results" id="interaction-results">Select a residue to explore nearby chemical interactions. Residues highlighted green have predicted interactions with your selection.</div>
+          <div class="analysis-results" id="interaction-results">Select 2–10 residues, then Analyze.</div>
           <div class="interaction-legend">
             <span class="legend-item"><span class="legend-swatch" style="background:#60a5fa"></span>H-bond (&le;3.5&Aring;)</span>
             <span class="legend-item"><span class="legend-swatch" style="background:#f97316"></span>Salt bridge (&le;4.0&Aring;)</span>
@@ -956,16 +966,16 @@
             <span class="legend-item"><span class="legend-swatch" style="background:#facc15"></span>Disulfide (&le;2.2&Aring;)</span>
           </div>
           <div class="analysis-actions">
-            <button id="analyze-interactions" class="analyze-button" type="button" disabled>Analyze Interactions</button>
-            <button id="focus-selection" class="focus-button" type="button">Focus Selection</button>
-            <button id="clear-selections" class="clear-button" type="button">Clear Selections</button>
+            <button id="analyze-interactions" class="analyze-button" type="button" disabled>Analyze</button>
+            <button id="focus-selection" class="focus-button" type="button">Focus</button>
+            <button id="clear-selections" class="clear-button" type="button">Clear</button>
+            <span class="limitations-tip" data-tip="Water-mediated and π-stacking interactions not detected" tabindex="0">&#x26A0;</span>
           </div>
           <div class="analysis-actions">
-            <button id="stability-toggle" class="stability-button" type="button" disabled>Stability Explorer</button>
+            <button id="stability-toggle" class="stability-button" type="button" disabled>Stability</button>
           </div>
           <div class="stability-explorer" id="stability-explorer" hidden>
-            <h5>Interaction Stability Explorer</h5>
-            <p class="stability-hint">How robust are these interactions to distance cutoff choice? Each bar shows the cutoff range where an interaction is detected. Wider bars indicate more stable interactions that are not artifacts of a single threshold.</p>
+            <h5>Stability</h5>
             <div class="stability-sweep-controls">
               <label for="sweep-slider">Sweep cutoff <span id="sweep-value">2.0&Aring;</span></label>
               <input id="sweep-slider" type="range" min="2.0" max="6.5" step="0.1" value="2.0" />
