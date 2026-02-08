@@ -1,3 +1,7 @@
+const DEFAULT_PDB = "6LYZ";
+const DEBUG = new URLSearchParams(window.location.search).has("debug");
+function dbg(...args) { if (DEBUG) console.log("[DBG]", ...args); }
+
 const displayInterval = 30000; // 30 seconds in milliseconds
 let currentIndex = 0;
 let isPaused = false;
@@ -44,22 +48,30 @@ function generateRandomIndices(count, max) {
   return Array.from(indices);
 }
 
-// Add this new function to initialize the slideshow with the fetched PDB IDs
+// Load DEFAULT_PDB immediately, then fetch PDB list in background for slideshow nav.
 async function initSlideshow() {
-  currentPdbIds = await getPdbIds(); // Store the fetched PDB IDs in the currentPdbIds variable
-  // if the list is empty, try a safe fallback so the UI still shows something
-  if (!currentPdbIds || currentPdbIds.length === 0) {
-    const fallback = ["1CRN", "4HHB", "1A4W", "2HYY", "6VXX", "1UBQ", "2OOB", "3LZT", "4HHB", "5XNL", "1BNA", "2XHE", "3J3Q", "1HHO", "1TUP"];
-    console.warn("Using fallback PDB IDs because none were fetched.", fallback);
-    currentPdbIds = fallback;
-  }
-  if (currentPdbIds.length > 0) {
-    currentIndex = 0;
-    loadProteinStructure(currentPdbIds[currentIndex]);
-    //intervalHandle = setInterval(moveForward, displayInterval);
-  } else {
-    console.error("Failed to initialize the slideshow");
-  }
+  dbg("initSlideshow: loading DEFAULT_PDB", DEFAULT_PDB);
+  currentPdbIds = [DEFAULT_PDB];
+  currentIndex = 0;
+  loadProteinStructure(DEFAULT_PDB);
+
+  // Fetch full PDB list in background so forward/back buttons work
+  getPdbIds().then((ids) => {
+    if (ids && ids.length > 0) {
+      currentPdbIds = ids;
+      // Put DEFAULT_PDB at front so index stays consistent
+      if (!currentPdbIds.includes(DEFAULT_PDB)) {
+        currentPdbIds.unshift(DEFAULT_PDB);
+      }
+      currentIndex = currentPdbIds.indexOf(DEFAULT_PDB);
+      dbg("PDB list loaded:", currentPdbIds.length, "entries");
+    } else {
+      const fallback = [DEFAULT_PDB, "1CRN", "4HHB", "1A4W", "2HYY", "6VXX", "1UBQ", "2OOB", "3LZT", "5XNL", "1BNA", "2XHE", "3J3Q", "1HHO", "1TUP"];
+      console.warn("Using fallback PDB IDs because none were fetched.", fallback);
+      currentPdbIds = fallback;
+      currentIndex = 0;
+    }
+  });
 }
 
 function logShownEntity(pdbId) {
@@ -276,15 +288,6 @@ const INTERACTION_COLORS = {
 };
 
 
-fetchPdbIds()
-  .then((entryIds) => {
-    console.log(`There are currently ${entryIds.length} PDB IDs.`);
-  })
-
-  .catch((error) => {
-    console.error("Error fetching PDB IDs:", error);
-  });
-
 playPauseButton.addEventListener("click", togglePlayPause);
 
 
@@ -468,12 +471,7 @@ function moveForward() {
     return;
   }
   currentIndex = (currentIndex + 1) % currentPdbIds.length;
-  // when we wrap to zero, re-seed the list (optional) to get fresh entries
-  if (currentIndex === 0) {
-    initSlideshow();
-  } else {
-    loadProteinStructure(currentPdbIds[currentIndex]);
-  }
+  loadProteinStructure(currentPdbIds[currentIndex]);
 }
 
 function moveBackward() {
@@ -533,7 +531,7 @@ function applyCurrentRepresentation(options = {}) {
   }
 
   setRepresentationVisibility(currentRepresentationMode);
-  updateSelectionHighlight(undefined, { force: true });
+  updateSelectionHighlight(sidePanelSelection, { force: true });
   if (stage.viewer && typeof stage.viewer.requestRender === "function") {
     stage.viewer.requestRender();
   }
@@ -601,7 +599,7 @@ function rebuildRepresentationHandles(mode) {
 
   ensureRepresentationHandles(mode);
   setRepresentationVisibility(currentRepresentationMode);
-  updateSelectionHighlight(undefined, { force: true });
+  updateSelectionHighlight(sidePanelSelection, { force: true });
 }
 
 function setRepresentationVisibility(activeMode) {
@@ -947,6 +945,7 @@ function handleSidePanelSelectionChange(selectedSet = new Set(), { focus = false
 }
 
 function updateSelectionHighlight(selectedSet, { focusOn = false, force = false } = {}) {
+  dbg("updateSelectionHighlight:", selectedSet ? selectedSet.size : 0, "residues, force:", force);
   if (!currentStructure || !currentComponent) {
     clearResidueVisuals();
     lastHighlightSelection = null;
@@ -1043,6 +1042,7 @@ function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
 }
 
 async function loadProteinStructure(pdbId) {
+  dbg("loadProteinStructure:", pdbId);
   const session = createLoadSession(pdbId);
   const myLoadToken = session.id;
   const modelNameEl = document.getElementById("model-name");
@@ -1097,6 +1097,7 @@ async function loadProteinStructure(pdbId) {
         return;
       }
 
+      dbg("loadProteinStructure: loaded", pdbId, "via", source.label);
       currentComponent = structureComponent;
       currentStructure = structureComponent.structure;
       representationHandles = {};
