@@ -121,7 +121,7 @@ function logShownEntity(pdbId) {
 
 
 
-const CONTACT_DISTANCE_CUTOFF = 5.0; // Å
+const CONTACT_DISTANCE_CUTOFF = 20.0; // Å — precompute contacts up to 20Å; UI slider controls display threshold
 
 function tuneStagePerformance(currentStage) {
   if (!currentStage) return;
@@ -356,9 +356,19 @@ function updateProximityDisplay() {
     proximityValueEl.textContent = formatAngstroms(proximityThreshold);
   }
   if (proximitySlider) {
+    // Slider max is 10; clamp display to slider range
+    const sliderMax = parseFloat(proximitySlider.max) || 10;
+    const sliderVal = Math.min(proximityThreshold, sliderMax);
     const current = parseFloat(proximitySlider.value);
-    if (!Number.isFinite(current) || Math.abs(current - proximityThreshold) > 0.05) {
-      proximitySlider.value = String(proximityThreshold);
+    if (!Number.isFinite(current) || Math.abs(current - sliderVal) > 0.05) {
+      proximitySlider.value = String(sliderVal);
+    }
+  }
+  const numInput = document.getElementById("proximity-number");
+  if (numInput) {
+    const numVal = parseFloat(numInput.value);
+    if (!Number.isFinite(numVal) || Math.abs(numVal - proximityThreshold) > 0.05) {
+      numInput.value = proximityThreshold.toFixed(1);
     }
   }
 }
@@ -366,7 +376,7 @@ function updateProximityDisplay() {
 function setProximityThreshold(nextValue) {
   const parsed = Number.parseFloat(nextValue);
   if (!Number.isFinite(parsed)) return;
-  const clamped = Math.min(CONTACT_DISTANCE_CUTOFF, Math.max(1, parsed));
+  const clamped = Math.min(20, Math.max(1, parsed));
   if (Math.abs(clamped - proximityThreshold) < 0.0001) return;
   proximityThreshold = clamped;
   updateProximityDisplay();
@@ -380,6 +390,17 @@ if (proximitySlider) {
   updateProximityDisplay();
 } else if (proximityValueEl) {
   updateProximityDisplay();
+}
+
+// Numeric proximity input (allows up to 20Å, beyond slider max of 10)
+const proximityNumberInput = document.getElementById("proximity-number");
+if (proximityNumberInput) {
+  proximityNumberInput.addEventListener("input", (event) => {
+    setProximityThreshold(event.target.value);
+  });
+  proximityNumberInput.addEventListener("change", (event) => {
+    setProximityThreshold(event.target.value);
+  });
 }
 
 function handleDirectLoad(pdbId) {
@@ -507,6 +528,129 @@ updateSpinState();
         scheduleFocus(lastHighlightSelection);
       }
     });
+  }
+})();
+
+// ---------------------------------------------------------------------------
+// Panel collapse / Zen mode / Resize handles
+// ---------------------------------------------------------------------------
+(function initPanelManagement() {
+  const leftPanel = document.getElementById("left-panel");
+  const rightPanel = document.getElementById("analysis-panel");
+  const collapseBarLeft = document.getElementById("collapse-bar-left");
+  const collapseBarRight = document.getElementById("collapse-bar-right");
+  const resizeLeft = document.getElementById("resize-left");
+  const resizeRight = document.getElementById("resize-right");
+  const toggleLeftBtn = document.getElementById("toggle-left-panel");
+  const toggleRightBtn = document.getElementById("toggle-right-panel");
+  const zenBtn = document.getElementById("zen-mode");
+
+  let leftCollapsed = false;
+  let rightCollapsed = false;
+  let zenMode = false;
+
+  function setPanelState(side, collapsed) {
+    const panel = side === "left" ? leftPanel : rightPanel;
+    const bar = side === "left" ? collapseBarLeft : collapseBarRight;
+    const handle = side === "left" ? resizeLeft : resizeRight;
+    const btn = side === "left" ? toggleLeftBtn : toggleRightBtn;
+
+    if (panel) panel.classList.toggle("is-collapsed", collapsed);
+    if (bar) bar.hidden = !collapsed;
+    if (handle) handle.hidden = collapsed;
+    if (btn) btn.classList.toggle("is-active", !collapsed);
+
+    if (side === "left") leftCollapsed = collapsed;
+    else rightCollapsed = collapsed;
+
+    // Let NGL know the viewport size changed
+    requestAnimationFrame(function () {
+      if (typeof stage !== "undefined" && stage && typeof stage.handleResize === "function") {
+        stage.handleResize();
+      }
+    });
+  }
+
+  function toggleZen() {
+    zenMode = !zenMode;
+    setPanelState("left", zenMode ? true : false);
+    setPanelState("right", zenMode ? true : false);
+    if (zenBtn) zenBtn.classList.toggle("zen-active", zenMode);
+  }
+
+  // Panel header close buttons
+  var collapseLeftBtn = document.getElementById("collapse-left");
+  var collapseRightBtn = document.getElementById("collapse-right");
+  if (collapseLeftBtn) collapseLeftBtn.addEventListener("click", function () { setPanelState("left", true); });
+  if (collapseRightBtn) collapseRightBtn.addEventListener("click", function () { setPanelState("right", true); });
+
+  // Collapse bar expand buttons
+  var expandLeftBtn = document.getElementById("expand-left");
+  var expandRightBtn = document.getElementById("expand-right");
+  if (expandLeftBtn) expandLeftBtn.addEventListener("click", function () { setPanelState("left", false); });
+  if (expandRightBtn) expandRightBtn.addEventListener("click", function () { setPanelState("right", false); });
+  // Clicking the bar itself also expands
+  if (collapseBarLeft) collapseBarLeft.addEventListener("click", function () { setPanelState("left", false); });
+  if (collapseBarRight) collapseBarRight.addEventListener("click", function () { setPanelState("right", false); });
+
+  // Header toggle buttons
+  if (toggleLeftBtn) toggleLeftBtn.addEventListener("click", function () { setPanelState("left", !leftCollapsed); });
+  if (toggleRightBtn) toggleRightBtn.addEventListener("click", function () { setPanelState("right", !rightCollapsed); });
+
+  // Zen mode
+  if (zenBtn) zenBtn.addEventListener("click", toggleZen);
+
+  // Escape key toggles zen mode
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA"))) {
+      toggleZen();
+    }
+  });
+
+  // Resize handles (drag to resize panels)
+  function initHandle(handleEl, panel, side) {
+    if (!handleEl || !panel) return;
+    handleEl.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      var startX = e.clientX;
+      var startWidth = panel.getBoundingClientRect().width;
+      handleEl.classList.add("is-dragging");
+
+      function onMove(ev) {
+        var dx = side === "left" ? ev.clientX - startX : startX - ev.clientX;
+        var newWidth = Math.max(180, Math.min(500, startWidth + dx));
+        panel.style.width = newWidth + "px";
+        if (typeof stage !== "undefined" && stage && typeof stage.handleResize === "function") {
+          stage.handleResize();
+        }
+      }
+
+      function onUp() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        handleEl.classList.remove("is-dragging");
+      }
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    });
+  }
+
+  initHandle(resizeLeft, leftPanel, "left");
+  initHandle(resizeRight, rightPanel, "right");
+
+  // Layout debug outlines (behind ?debug=1)
+  if (DEBUG) {
+    document.querySelector(".app-shell")?.classList.add("debug-outlines");
+  }
+
+  // Responsive: collapse left panel by default on medium screens
+  if (window.innerWidth >= 800 && window.innerWidth < 1200) {
+    setPanelState("left", true);
   }
 })();
 
@@ -833,15 +977,21 @@ function hasInteractionBetween(residueA, residueB) {
 }
 
 
+let lastProximityCount = 0;
+let lastInteractionCount = 0;
+
 function applyResidueFilter() {
   if (applyFilterTimeout) {
     clearTimeout(applyFilterTimeout);
     applyFilterTimeout = null;
   }
-  const threshold = proximityThreshold || CONTACT_DISTANCE_CUTOFF;
+  const threshold = proximityThreshold || 5;
 
   if (!residueDataset.list.length) {
+    lastProximityCount = 0;
+    lastInteractionCount = 0;
     SidePanel.applyFilter(undefined, { proximity: new Set(), interaction: new Set(), threshold });
+    updateSelectionCounts();
     return;
   }
 
@@ -866,16 +1016,12 @@ function applyResidueFilter() {
     });
   }
 
-  if (selection.size === 0) {
-    SidePanel.applyFilter(undefined, { proximity: proximitySet, interaction: interactionSet, threshold });
-    return;
-  }
+  lastProximityCount = proximitySet.size;
+  lastInteractionCount = interactionSet.size;
 
-  const validResidues = new Set();
-  selection.forEach((key) => validResidues.add(key));
-  proximitySet.forEach((key) => validResidues.add(key));
-
-  SidePanel.applyFilter(validResidues, { proximity: proximitySet, interaction: interactionSet, threshold });
+  // Option A: Selection is always allowed. Cutoff only controls highlighting.
+  // Pass undefined for validResidues so no residues are disabled.
+  SidePanel.applyFilter(undefined, { proximity: proximitySet, interaction: interactionSet, threshold });
 
   if (
     interactionResultsEl &&
@@ -889,6 +1035,28 @@ function applyResidueFilter() {
       setInteractionMessage(message, "info-warning");
       SidePanel.announce("No interactions available.");
     }
+  }
+
+  updateSelectionCounts();
+}
+
+function updateSelectionCounts() {
+  const selEl = document.getElementById("count-selected");
+  const proxEl = document.getElementById("count-proximity");
+  const intEl = document.getElementById("count-interactions");
+
+  const selCount = sidePanelSelection.size;
+  if (selEl) {
+    selEl.textContent = selCount + " sel";
+    selEl.className = "cnt" + (selCount > 0 ? " cnt-active" : "");
+  }
+  if (proxEl) {
+    proxEl.textContent = lastProximityCount + " near";
+    proxEl.className = "cnt" + (lastProximityCount > 0 ? " cnt-prox-active" : "");
+  }
+  if (intEl) {
+    intEl.textContent = lastInteractionCount + " int";
+    intEl.className = "cnt" + (lastInteractionCount > 0 ? " cnt-int-active" : "");
   }
 }
 
@@ -928,11 +1096,14 @@ function resetAnalysisUI(message = DEFAULT_ANALYSIS_MESSAGE) {
     stabilityToggle.disabled = true;
     stabilityToggle.classList.remove("is-active");
   }
+  lastProximityCount = 0;
+  lastInteractionCount = 0;
   SidePanel.renderResidueList([]);
   SidePanel.updateSelections([]);
   SidePanel.applyFilter(undefined, { proximity: new Set(), interaction: new Set(), threshold: proximityThreshold });
   setInteractionMessage(message, "info-default");
   SidePanel.announce(message);
+  updateSelectionCounts();
 }
 
 function setInteractionMessage(message, state = "info-default") {
