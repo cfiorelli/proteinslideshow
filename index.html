@@ -596,6 +596,8 @@
       color: var(--text-secondary);
       margin-top: 6px;
       min-height: 150px;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }
 
     .analysis-results ul {
@@ -606,6 +608,202 @@
 
     .analysis-results li {
       margin-bottom: 4px;
+    }
+
+    /* Instructional hint */
+    .analysis-guide {
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      padding: 6px 8px;
+      background: rgba(56, 189, 248, 0.06);
+      border: 1px solid rgba(56, 189, 248, 0.15);
+      border-radius: 6px;
+      margin: 0;
+    }
+
+    /* Interaction types legend */
+    .interaction-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      font-size: 10px;
+      color: var(--text-secondary);
+      padding: 6px 0 0;
+      margin-top: 2px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .legend-swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    /* Focus button */
+    .focus-button {
+      flex: 0 1 auto;
+      padding: 5px 10px;
+      font-size: 11px;
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      font-weight: 500;
+    }
+
+    /* Stability Explorer */
+    .stability-button {
+      flex: 1 1 150px;
+      min-width: 130px;
+      padding: 5px 10px;
+      font-size: 11px;
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      font-weight: 500;
+    }
+
+    .stability-button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .stability-button.is-active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: rgba(56, 189, 248, 0.6);
+    }
+
+    .stability-explorer {
+      margin-top: 10px;
+      padding: 10px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 10px;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+    }
+
+    .stability-explorer[hidden] {
+      display: none;
+    }
+
+    .stability-explorer h5 {
+      color: var(--accent);
+      margin: 0 0 4px;
+    }
+
+    .stability-hint {
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      margin: 0 0 10px;
+    }
+
+    .stability-sweep-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .stability-sweep-controls label {
+      font-size: 11px;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .stability-sweep-controls input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .stability-sweep-buttons {
+      display: flex;
+      gap: 6px;
+    }
+
+    .stability-results {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    .stability-scale {
+      position: relative;
+      height: 16px;
+      margin-bottom: 4px;
+    }
+
+    .stability-scale-mark {
+      position: absolute;
+      font-size: 9px;
+      color: var(--text-secondary);
+      transform: translateX(-50%);
+    }
+
+    .stability-item {
+      padding: 6px 8px;
+      background: rgba(10, 16, 26, 0.6);
+      border-radius: 6px;
+      border: 1px solid rgba(71, 85, 105, 0.3);
+      transition: border-color 200ms ease, background 200ms ease, opacity 200ms ease;
+    }
+
+    .stability-item.is-active {
+      border-color: rgba(56, 189, 248, 0.5);
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    .stability-item.is-faded {
+      opacity: 0.3;
+    }
+
+    .stability-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 2px;
+    }
+
+    .stability-range-text {
+      font-size: 10px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .stability-bar {
+      height: 6px;
+      background: rgba(148, 163, 184, 0.12);
+      border-radius: 3px;
+      position: relative;
+      overflow: visible;
+    }
+
+    .stability-bar-fill {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      border-radius: 3px;
+      opacity: 0.8;
+      transition: opacity 150ms ease;
+    }
+
+    .stability-bar-cursor {
+      position: absolute;
+      top: -2px;
+      height: calc(100% + 4px);
+      width: 2px;
+      background: #fff;
+      border-radius: 1px;
+      transition: left 60ms linear;
+      z-index: 1;
     }
 
     .sr-only {
@@ -738,9 +936,10 @@
         <h4>Side-chain Interactions</h4>
         <div id="live-region" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         <div class="analysis-panel-content">
-          <h5 class="analysis-title">Select up to 10 residues for interaction analysis</h5>
+          <h5 class="analysis-title">Residue Selection</h5>
+          <p class="analysis-guide">Select a residue to explore nearby chemical interactions. Residues within the proximity threshold appear blue; those with predicted interactions appear green.</p>
           <div class="analysis-search">
-            <input id="residue-search-input" type="search" placeholder="Search residues..." autocomplete="off" />
+            <input id="residue-search-input" type="search" placeholder="Search residues (e.g. ALA A42)..." autocomplete="off" />
           </div>
           <div class="analysis-threshold">
             <label for="proximity-threshold">Proximity threshold <span class="analysis-threshold-value" id="proximity-value">5Å</span></label>
@@ -749,10 +948,33 @@
           <div class="analysis-select">
             <ul class="analysis-list" id="residue-list" role="listbox" aria-label="Side chains"></ul>
           </div>
-          <div class="analysis-results" id="interaction-results">How to use: 1) Set the proximity threshold (Å). 2) Select a side chain — nearby residues within the threshold will be highlighted blue. 3) If any nearby residues have predicted chemical interactions with your selection they will be highlighted green. Select interacting residues and click Analyze to see details.</div>
+          <div class="analysis-results" id="interaction-results">Select a residue to explore nearby chemical interactions. Residues highlighted green have predicted interactions with your selection.</div>
+          <div class="interaction-legend">
+            <span class="legend-item"><span class="legend-swatch" style="background:#60a5fa"></span>H-bond (&le;3.5&Aring;)</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#f97316"></span>Salt bridge (&le;4.0&Aring;)</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#a855f7"></span>Ionic (&le;6.0&Aring;)</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#facc15"></span>Disulfide (&le;2.2&Aring;)</span>
+          </div>
           <div class="analysis-actions">
             <button id="analyze-interactions" class="analyze-button" type="button" disabled>Analyze Interactions</button>
+            <button id="focus-selection" class="focus-button" type="button">Focus Selection</button>
             <button id="clear-selections" class="clear-button" type="button">Clear Selections</button>
+          </div>
+          <div class="analysis-actions">
+            <button id="stability-toggle" class="stability-button" type="button" disabled>Stability Explorer</button>
+          </div>
+          <div class="stability-explorer" id="stability-explorer" hidden>
+            <h5>Interaction Stability Explorer</h5>
+            <p class="stability-hint">How robust are these interactions to distance cutoff choice? Each bar shows the cutoff range where an interaction is detected. Wider bars indicate more stable interactions that are not artifacts of a single threshold.</p>
+            <div class="stability-sweep-controls">
+              <label for="sweep-slider">Sweep cutoff <span id="sweep-value">2.0&Aring;</span></label>
+              <input id="sweep-slider" type="range" min="2.0" max="6.5" step="0.1" value="2.0" />
+              <div class="stability-sweep-buttons">
+                <button id="sweep-play" class="toggle" type="button">&#x25B6; Animate</button>
+                <button id="sweep-reset" class="toggle" type="button">Reset</button>
+              </div>
+            </div>
+            <div class="stability-results" id="stability-results"></div>
           </div>
         </div>
       </aside>

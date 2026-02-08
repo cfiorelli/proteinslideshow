@@ -163,20 +163,32 @@ let focusTimeout = null;
 let proximityThreshold = CONTACT_DISTANCE_CUTOFF;
 let interactionCache = new Map();
 let applyFilterTimeout = null;
+let hasAutoFocusedForStructure = false;
+let stabilityMode = false;
+let stabilityData = [];
+let sweepValue = SWEEP_MIN;
+let sweepAnimationId = null;
+let isSweeping = false;
+let lastAnalyzedInteractions = [];
 
 const FILTER_DEBOUNCE_MS = 75;
-const DEFAULT_ANALYSIS_MESSAGE = "Analysis results will show here. Procedure: Set your desired proximity. Select a residue of interest. If interactions are available, they will be highlighted in green. Select interacting residues and click Analyze to see chemical interactions.";
+const DEFAULT_ANALYSIS_MESSAGE = "Select a residue to explore nearby chemical interactions. Residues highlighted green have predicted interactions with your selection.";
 
-const HIGHLIGHT_COLORS = [
-  "#f97316",
-  "#22d3ee",
-  "#c084fc",
-  "#facc15",
-  "#4ade80",
-  "#fb7185",
-  "#38bdf8",
-  "#f472b6",
-];
+// Consistent color semantics:
+// Blue = explicitly selected residue (3D view)
+// Green = interacting residue (side panel CSS only)
+// Interaction-type colors reserved for analysis visualizations
+const SELECTED_RESIDUE_COLOR = "#38bdf8";
+
+// Distance cutoffs by interaction type (used by stability explorer)
+const TYPE_CUTOFFS = {
+  "Hydrogen Bond": 3.5,
+  "Salt Bridge": 4.0,
+  "Ionic Interaction": 6.0,
+  "Disulfide Bond": 2.2,
+};
+const SWEEP_MIN = 2.0;
+const SWEEP_MAX = 6.5;
 
 const representationConfigs = {
   cartoon: [
@@ -414,6 +426,40 @@ if (toggleSpinButton) {
 }
 updateSpinControlUI();
 updateSpinState();
+
+// Stability Explorer controls
+(function wireStabilityControls() {
+  var stabilityToggle = document.getElementById("stability-toggle");
+  var sweepSlider = document.getElementById("sweep-slider");
+  var sweepPlayBtn = document.getElementById("sweep-play");
+  var sweepResetBtn = document.getElementById("sweep-reset");
+  var focusSelectionBtn = document.getElementById("focus-selection");
+
+  if (stabilityToggle) {
+    stabilityToggle.addEventListener("click", toggleStabilityMode);
+  }
+  if (sweepSlider) {
+    sweepSlider.addEventListener("input", function (e) {
+      stopSweep();
+      sweepValue = parseFloat(e.target.value);
+      updateSweepDisplay();
+      updateSweepVisualization(sweepValue);
+    });
+  }
+  if (sweepPlayBtn) {
+    sweepPlayBtn.addEventListener("click", startSweep);
+  }
+  if (sweepResetBtn) {
+    sweepResetBtn.addEventListener("click", resetSweep);
+  }
+  if (focusSelectionBtn) {
+    focusSelectionBtn.addEventListener("click", function () {
+      if (lastHighlightSelection) {
+        scheduleFocus(lastHighlightSelection);
+      }
+    });
+  }
+})();
 
 function moveForward() {
   stage.setSpin(null); // stop spinning
@@ -824,6 +870,20 @@ function resetAnalysisUI(message = DEFAULT_ANALYSIS_MESSAGE) {
   clearInteractionVisuals();
   residueDataset = { list: [], map: new Map(), contactMap: new Map() };
   interactionCache = new Map();
+  hasAutoFocusedForStructure = false;
+  // Reset stability explorer state
+  stabilityMode = false;
+  stabilityData = [];
+  lastAnalyzedInteractions = [];
+  sweepValue = SWEEP_MIN;
+  stopSweep();
+  const stabilityPanel = document.getElementById("stability-explorer");
+  if (stabilityPanel) stabilityPanel.hidden = true;
+  const stabilityToggle = document.getElementById("stability-toggle");
+  if (stabilityToggle) {
+    stabilityToggle.disabled = true;
+    stabilityToggle.classList.remove("is-active");
+  }
   SidePanel.renderResidueList([]);
   SidePanel.updateSelections([]);
   SidePanel.applyFilter(undefined, { proximity: new Set(), interaction: new Set(), threshold: proximityThreshold });
@@ -851,6 +911,7 @@ function updateSidePanelResidues(structure) {
   clearResidueVisuals();
   lastHighlightSelection = null;
   clearInteractionVisuals();
+  hasAutoFocusedForStructure = false;
 
   if (!dataset.list.length) {
     resetAnalysisUI("No protein residues available for analysis in this structure.");
@@ -911,8 +972,7 @@ function updateSelectionHighlight(selectedSet, { focusOn = false, force = false 
     if (!residueData) return;
 
     if (!residueColorMap.has(id)) {
-      const color = HIGHLIGHT_COLORS[residueColorMap.size % HIGHLIGHT_COLORS.length];
-      residueColorMap.set(id, color);
+      residueColorMap.set(id, SELECTED_RESIDUE_COLOR);
     }
 
     if (!selectedResidueVisuals.has(id) || force) {
@@ -926,8 +986,11 @@ function updateSelectionHighlight(selectedSet, { focusOn = false, force = false 
 
   lastHighlightSelection = selectionParts.length ? selectionParts.join(" OR ") : null;
 
-  if (focusOn && lastHighlightSelection) {
+  // Auto-focus only on first residue selection per structure.
+  // Subsequent selections preserve the user's manual camera position.
+  if (focusOn && lastHighlightSelection && !hasAutoFocusedForStructure) {
     scheduleFocus(lastHighlightSelection);
+    hasAutoFocusedForStructure = true;
   }
 }
 
@@ -962,8 +1025,21 @@ function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
     }
   }
 
+  lastAnalyzedInteractions = interactions;
   renderInteractionResults(residueData, interactions);
   updateInteractionVisuals(residueData, interactions, involvedAtoms);
+
+  // Enable stability explorer toggle when interactions are found
+  const stabilityToggle = document.getElementById("stability-toggle");
+  if (stabilityToggle) stabilityToggle.disabled = interactions.length === 0;
+
+  // If stability mode is already active, refresh stability data
+  if (stabilityMode && interactions.length) {
+    stabilityData = computeStabilityData(interactions);
+    renderStabilityResults(stabilityData);
+    updateSweepDisplay();
+    updateSweepVisualization(sweepValue);
+  }
 }
 
 async function loadProteinStructure(pdbId) {
@@ -1197,6 +1273,11 @@ function detectHydrogenBonds(donorResidue, acceptorResidue, interactions, involv
           description: `Hydrogen bond between ${donorResidue.label} ${dAtom.name} and ${acceptorResidue.label} ${aAtom.name} (${distance.toFixed(2)} Å)`,
           atomA: dAtom.index,
           atomB: aAtom.index,
+          distance,
+          residueALabel: donorResidue.label,
+          residueBLabel: acceptorResidue.label,
+          atomAName: dAtom.name,
+          atomBName: aAtom.name,
         });
         involvedAtoms.add(dAtom.index);
         involvedAtoms.add(aAtom.index);
@@ -1225,6 +1306,11 @@ function detectSaltAndIonicInteractions(resA, resB, interactions, involvedAtoms)
           description: `${type} between ${resA.label} ${posAtom.name} and ${resB.label} ${negAtom.name} (${distance.toFixed(2)} Å)`,
           atomA: posAtom.index,
           atomB: negAtom.index,
+          distance,
+          residueALabel: resA.label,
+          residueBLabel: resB.label,
+          atomAName: posAtom.name,
+          atomBName: negAtom.name,
         });
         involvedAtoms.add(posAtom.index);
         involvedAtoms.add(negAtom.index);
@@ -1250,6 +1336,11 @@ function detectDisulfideBond(resA, resB, interactions, involvedAtoms) {
       description: `Disulfide bond between ${resA.label} SG and ${resB.label} SG (${distance.toFixed(2)} Å)`,
       atomA: sgA[0].index,
       atomB: sgB[0].index,
+      distance,
+      residueALabel: resA.label,
+      residueBLabel: resB.label,
+      atomAName: "SG",
+      atomBName: "SG",
     });
     involvedAtoms.add(sgA[0].index);
     involvedAtoms.add(sgB[0].index);
@@ -1294,7 +1385,8 @@ function updateInteractionVisuals(residueData, interactions, involvedAtoms) {
   clearInteractionVisuals();
   if (!currentComponent || !currentStructure) return;
 
-  updateSelectionHighlight();
+  // Preserve existing selection highlights (pass current selection, not empty)
+  updateSelectionHighlight(sidePanelSelection);
 
   if (!interactions.length) return;
 
@@ -1316,6 +1408,266 @@ function updateInteractionVisuals(residueData, interactions, involvedAtoms) {
   interactionShapeComponent = stage.addComponentFromObject(shape);
   interactionShapeComponent.addRepresentation("buffer");
 }
+
+// ---------------------------------------------------------------------------
+// Interaction Stability Explorer
+// Helps scientists answer: "Is this interaction robust, or an artifact of an
+// arbitrary cutoff?" by sweeping a unified distance cutoff across the
+// detection range and showing where each interaction appears/disappears.
+// ---------------------------------------------------------------------------
+
+function toggleStabilityMode() {
+  stabilityMode = !stabilityMode;
+  const panel = document.getElementById("stability-explorer");
+  const toggle = document.getElementById("stability-toggle");
+  if (panel) panel.hidden = !stabilityMode;
+  if (toggle) toggle.classList.toggle("is-active", stabilityMode);
+
+  if (stabilityMode && lastAnalyzedInteractions.length) {
+    stabilityData = computeStabilityData(lastAnalyzedInteractions);
+    renderStabilityResults(stabilityData);
+    sweepValue = SWEEP_MIN;
+    updateSweepDisplay();
+    updateSweepVisualization(sweepValue);
+  } else {
+    stopSweep();
+    stabilityData = [];
+    // Restore normal interaction visuals
+    if (lastAnalyzedInteractions.length) {
+      rebuildInteractionShape(lastAnalyzedInteractions);
+    }
+  }
+}
+
+// Compute stability metadata for each interaction: where it appears and
+// disappears on the distance-cutoff axis, plus a robustness score.
+function computeStabilityData(interactions) {
+  return interactions.map((interaction) => {
+    const cutoff = TYPE_CUTOFFS[interaction.type] || 5.0;
+    const appearsAt = interaction.distance;
+    const disappearsAt = cutoff;
+    const rangeWidth = Math.max(0, disappearsAt - appearsAt);
+    const maxRange = SWEEP_MAX - SWEEP_MIN;
+    const robustness = Math.max(0, Math.min(1, rangeWidth / maxRange));
+    return Object.assign({}, interaction, {
+      appearsAt,
+      disappearsAt,
+      rangeWidth,
+      robustness,
+    });
+  });
+}
+
+function renderStabilityResults(data) {
+  const container = document.getElementById("stability-results");
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!data.length) {
+    container.textContent = "No interactions to analyze.";
+    return;
+  }
+
+  const sorted = data.slice().sort(function (a, b) { return b.robustness - a.robustness; });
+
+  // Distance scale reference
+  const scaleDiv = document.createElement("div");
+  scaleDiv.className = "stability-scale";
+  for (let v = Math.ceil(SWEEP_MIN); v <= SWEEP_MAX; v += 1) {
+    const mark = document.createElement("span");
+    mark.className = "stability-scale-mark";
+    mark.style.left = ((v - SWEEP_MIN) / (SWEEP_MAX - SWEEP_MIN) * 100) + "%";
+    mark.textContent = v + "Å";
+    scaleDiv.appendChild(mark);
+  }
+  container.appendChild(scaleDiv);
+
+  sorted.forEach(function (entry, idx) {
+    var item = document.createElement("div");
+    item.className = "stability-item";
+    item.dataset.appearsAt = String(entry.appearsAt);
+    item.dataset.disappearsAt = String(entry.disappearsAt);
+
+    var label = document.createElement("div");
+    label.className = "stability-label";
+    var atomDetail = (entry.atomAName && entry.atomBName)
+      ? " (" + entry.atomAName + "\u2013" + entry.atomBName + ")"
+      : "";
+    label.textContent = entry.type + ": " + entry.residueALabel + " \u2194 " + entry.residueBLabel + atomDetail;
+
+    var rangeText = document.createElement("div");
+    rangeText.className = "stability-range-text";
+    var robustnessLabel = entry.robustness >= 0.12 ? "Robust" : entry.robustness >= 0.04 ? "Moderate" : "Fragile";
+    rangeText.textContent = "Persists " + entry.appearsAt.toFixed(1) + "\u2013" + entry.disappearsAt.toFixed(1) + " \u00C5  \u00B7 \u0394" + entry.rangeWidth.toFixed(1) + " \u00C5 \u00B7 " + robustnessLabel;
+
+    var bar = document.createElement("div");
+    bar.className = "stability-bar";
+
+    var fill = document.createElement("div");
+    fill.className = "stability-bar-fill";
+    var color = INTERACTION_COLORS[entry.type] || 0xffffff;
+    var hex = "#" + color.toString(16).padStart(6, "0");
+    fill.style.background = hex;
+    var leftPct = Math.max(0, (entry.appearsAt - SWEEP_MIN) / (SWEEP_MAX - SWEEP_MIN) * 100);
+    var widthPct = Math.max(1, entry.rangeWidth / (SWEEP_MAX - SWEEP_MIN) * 100);
+    fill.style.left = leftPct + "%";
+    fill.style.width = widthPct + "%";
+
+    var cursor = document.createElement("div");
+    cursor.className = "stability-bar-cursor";
+    cursor.style.left = "0%";
+
+    bar.appendChild(fill);
+    bar.appendChild(cursor);
+
+    item.appendChild(label);
+    item.appendChild(rangeText);
+    item.appendChild(bar);
+    container.appendChild(item);
+  });
+}
+
+function updateSweepDisplay() {
+  var valueEl = document.getElementById("sweep-value");
+  var slider = document.getElementById("sweep-slider");
+  if (valueEl) valueEl.textContent = sweepValue.toFixed(1) + "\u00C5";
+  if (slider && Math.abs(parseFloat(slider.value) - sweepValue) > 0.05) {
+    slider.value = String(sweepValue);
+  }
+}
+
+// Rebuild the 3D interaction shape showing only interactions active at the
+// current sweep cutoff. Called on each sweep step.
+function updateSweepVisualization(value) {
+  if (!stabilityMode || !stabilityData.length || !currentStructure || !currentComponent) return;
+
+  clearInteractionVisuals();
+
+  var shape = new NGL.Shape("stability-sweep");
+  var atomProxyA = currentStructure.getAtomProxy();
+  var atomProxyB = currentStructure.getAtomProxy();
+  var hasVisible = false;
+
+  stabilityData.forEach(function (entry) {
+    var isActive = value >= entry.appearsAt && value <= entry.disappearsAt;
+    if (isActive) {
+      hasVisible = true;
+      var color = INTERACTION_COLORS[entry.type] || 0xffffff;
+      atomProxyA.index = entry.atomA;
+      atomProxyB.index = entry.atomB;
+      var from = [atomProxyA.x, atomProxyA.y, atomProxyA.z];
+      var to = [atomProxyB.x, atomProxyB.y, atomProxyB.z];
+      shape.addCylinder(from, to, color, 0.15);
+      shape.addSphere(from, color, 0.25);
+      shape.addSphere(to, color, 0.25);
+    }
+  });
+
+  if (hasVisible) {
+    interactionShapeComponent = stage.addComponentFromObject(shape);
+    interactionShapeComponent.addRepresentation("buffer");
+  }
+
+  // Update sweep cursor position on all stability bars
+  var pct = ((value - SWEEP_MIN) / (SWEEP_MAX - SWEEP_MIN)) * 100;
+  document.querySelectorAll(".stability-bar-cursor").forEach(function (cursor) {
+    cursor.style.left = pct + "%";
+  });
+
+  // Highlight/fade items based on whether the sweep includes them
+  document.querySelectorAll(".stability-item").forEach(function (item) {
+    var appears = parseFloat(item.dataset.appearsAt);
+    var disappears = parseFloat(item.dataset.disappearsAt);
+    var active = value >= appears && value <= disappears;
+    item.classList.toggle("is-active", active);
+    item.classList.toggle("is-faded", !active);
+  });
+}
+
+// Rebuild the full interaction shape (used when exiting stability mode)
+function rebuildInteractionShape(interactions) {
+  clearInteractionVisuals();
+  if (!currentComponent || !currentStructure || !interactions.length) return;
+
+  var shape = new NGL.Shape("sidechain-interactions");
+  var atomProxyA = currentStructure.getAtomProxy();
+  var atomProxyB = currentStructure.getAtomProxy();
+
+  interactions.forEach(function (interaction) {
+    var color = INTERACTION_COLORS[interaction.type] || 0xffffff;
+    atomProxyA.index = interaction.atomA;
+    atomProxyB.index = interaction.atomB;
+    var from = [atomProxyA.x, atomProxyA.y, atomProxyA.z];
+    var to = [atomProxyB.x, atomProxyB.y, atomProxyB.z];
+    shape.addCylinder(from, to, color, 0.15);
+    shape.addSphere(from, color, 0.25);
+    shape.addSphere(to, color, 0.25);
+  });
+
+  interactionShapeComponent = stage.addComponentFromObject(shape);
+  interactionShapeComponent.addRepresentation("buffer");
+}
+
+function startSweep() {
+  if (isSweeping) {
+    stopSweep();
+    return;
+  }
+  isSweeping = true;
+  sweepValue = SWEEP_MIN;
+  updateSweepDisplay();
+
+  var playBtn = document.getElementById("sweep-play");
+  if (playBtn) playBtn.textContent = "\u23F8 Pause";
+
+  var lastTime = performance.now();
+
+  function step(now) {
+    if (!isSweeping || !stabilityMode) {
+      stopSweep();
+      return;
+    }
+    var dt = now - lastTime;
+    lastTime = now;
+    // Sweep at ~1.0 Å per second for a comfortable pace
+    sweepValue += (dt / 1000) * 1.0;
+
+    if (sweepValue >= SWEEP_MAX) {
+      sweepValue = SWEEP_MAX;
+      updateSweepDisplay();
+      updateSweepVisualization(sweepValue);
+      stopSweep();
+      return;
+    }
+
+    updateSweepDisplay();
+    updateSweepVisualization(sweepValue);
+    sweepAnimationId = requestAnimationFrame(step);
+  }
+
+  sweepAnimationId = requestAnimationFrame(step);
+}
+
+function stopSweep() {
+  isSweeping = false;
+  if (sweepAnimationId) {
+    cancelAnimationFrame(sweepAnimationId);
+    sweepAnimationId = null;
+  }
+  var playBtn = document.getElementById("sweep-play");
+  if (playBtn) playBtn.textContent = "\u25B6 Animate";
+}
+
+function resetSweep() {
+  stopSweep();
+  sweepValue = SWEEP_MIN;
+  updateSweepDisplay();
+  updateSweepVisualization(sweepValue);
+}
+
+// ---------------------------------------------------------------------------
+// End Stability Explorer
+// ---------------------------------------------------------------------------
 
 async function fetchEntryMetadata(pdbId, options = {}) {
   const entryUrl = `https://data.rcsb.org/rest/v1/core/entry/${pdbId}`;
