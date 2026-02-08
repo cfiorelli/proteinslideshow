@@ -421,9 +421,9 @@ analysisPanelEl.addEventListener("sidepanel:residueSelected", (event) => {
   const { selected, selectedResidues = [], accepted = true, reason } = detail;
   if (accepted === false) {
     if (reason === "limit") {
-      setInteractionMessage("Maximum of 10 residues reached. Deselect one before adding another.", "info-warning");
+      setInteractionMessage("Max 10 residues.", "info-warning");
     } else if (reason === "disabled") {
-      setInteractionMessage("No interactions available with current selection.", "info-warning");
+      setInteractionMessage("No interactions for this residue.", "info-warning");
     }
     applyResidueFilter();
     return;
@@ -849,8 +849,8 @@ function applyResidueFilter() {
   ) {
     if (interactionSet.size === 0) {
       const message = proximitySet.size === 0
-        ? `No residues within ${formatAngstroms(threshold)} of the current selection.`
-        : "No predicted interactions for the current selection at this threshold.";
+        ? `No residues within ${formatAngstroms(threshold)}.`
+        : "No interactions at this threshold.";
       setInteractionMessage(message, "info-warning");
       SidePanel.announce("No interactions available.");
     }
@@ -908,7 +908,7 @@ function setInteractionMessage(message, state = "info-default") {
 
 function updateSidePanelResidues(structure) {
   if (!structure) {
-    resetAnalysisUI("Load a structure before analysis.");
+    resetAnalysisUI("Load a structure first.");
     return;
   }
 
@@ -923,7 +923,7 @@ function updateSidePanelResidues(structure) {
   hasAutoFocusedForStructure = false;
 
   if (!dataset.list.length) {
-    resetAnalysisUI("No protein residues available for analysis in this structure.");
+    resetAnalysisUI("No residues in this structure.");
     return;
   }
 
@@ -945,11 +945,11 @@ function handleSidePanelSelectionChange(selectedSet = new Set(), { focus = false
   if (!selection.size) {
     setInteractionMessage(DEFAULT_ANALYSIS_MESSAGE, "info-default");
   } else if (selection.size < 2) {
-    setInteractionMessage("Select between 2 and 10 residues before analyzing.", "info-default");
+    setInteractionMessage("Select at least 2 residues.", "info-default");
   } else if (selection.size > 10) {
-    setInteractionMessage("Select between 2 and 10 residues before analyzing.", "info-warning");
+    setInteractionMessage("Max 10 residues.", "info-warning");
   } else if (interactionResultsEl && interactionResultsEl.dataset.state === "results") {
-    setInteractionMessage("Selection changed. Click Analyze to refresh interactions.", "info-dirty");
+    setInteractionMessage("Selection changed \u2014 re-analyze.", "info-dirty");
   }
 
   applyResidueFilter();
@@ -1007,13 +1007,13 @@ function updateSelectionHighlight(selectedSet, { focusOn = false, force = false 
 function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
   if (!interactionResultsEl || !currentComponent) return;
   if (!currentStructure) {
-    setInteractionMessage("Load a structure before running the analysis.", "info-default");
+    setInteractionMessage("Load a structure first.", "info-default");
     return;
   }
 
   const residueIds = Array.from(selectedSet || new Set());
   if (residueIds.length < 2 || residueIds.length > 10) {
-    setInteractionMessage("Select between 2 and 10 residues before analyzing.", "info-default");
+    setInteractionMessage("Select 2\u201310 residues first.", "info-default");
     return;
   }
 
@@ -1022,7 +1022,7 @@ function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
     .filter(Boolean);
 
   if (residueData.length < 2) {
-    setInteractionMessage("Unable to resolve residue data for the current selection.", "info-warning");
+    setInteractionMessage("Cannot resolve residue data.", "info-warning");
     return;
   }
 
@@ -1061,7 +1061,7 @@ async function loadProteinStructure(pdbId) {
   stage.removeAllComponents();
   currentComponent = null;
   currentStructure = null;
-  resetAnalysisUI("Loading structure; residue list will appear shortly.");
+  resetAnalysisUI("Loading\u2026");
 
   updateMetadataPanel(pdbId, myLoadToken, session);
 
@@ -1121,7 +1121,7 @@ async function loadProteinStructure(pdbId) {
         updateSidePanelResidues(currentStructure);
       } catch (panelError) {
         console.error(`Loaded ${pdbId} but failed to update side panel`, panelError);
-        resetAnalysisUI("Residue list unavailable for this structure.");
+        resetAnalysisUI("Residue list unavailable.");
       }
       return;
     } catch (err) {
@@ -1132,7 +1132,7 @@ async function loadProteinStructure(pdbId) {
 
   console.error(`Failed to load structure ${pdbId} from all sources.`, lastError);
   modelNameEl.textContent = `${pdbId} (failed)`;
-  resetAnalysisUI("Unable to analyze until a structure loads successfully.");
+  resetAnalysisUI("Load failed.");
   if (lastError && lastError.message && /CORS|cross-origin|NetworkError/i.test(lastError.message)) {
     console.warn("Possible CORS or network error when loading structure. Check console and server CORS headers.");
   }
@@ -1376,7 +1376,7 @@ function getAtomsByNames(residueData, names = []) {
 function renderInteractionResults(residueData, interactions) {
   if (!interactionResultsEl) return;
   if (!interactions.length) {
-    interactionResultsEl.textContent = "No side-chain interactions detected between the selected residues (within default distance thresholds).";
+    interactionResultsEl.textContent = "No interactions detected at current thresholds.";
     interactionResultsEl.dataset.state = "info-empty";
     return;
   }
