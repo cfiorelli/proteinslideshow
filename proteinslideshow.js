@@ -48,30 +48,62 @@ function generateRandomIndices(count, max) {
   return Array.from(indices);
 }
 
+const FALLBACK_PDB = "1CRN";
+
 // Load DEFAULT_PDB immediately, then fetch PDB list in background for slideshow nav.
 async function initSlideshow() {
   dbg("initSlideshow: loading DEFAULT_PDB", DEFAULT_PDB);
-  currentPdbIds = [DEFAULT_PDB];
+  currentPdbIds = [DEFAULT_PDB, FALLBACK_PDB];
   currentIndex = 0;
-  loadProteinStructure(DEFAULT_PDB);
+
+  try {
+    await loadProteinStructure(DEFAULT_PDB);
+    dbg("initSlideshow: DEFAULT_PDB loaded successfully");
+  } catch (err) {
+    console.error("Failed to load DEFAULT_PDB", DEFAULT_PDB, err);
+    dbg("initSlideshow: trying FALLBACK_PDB", FALLBACK_PDB);
+    try {
+      await loadProteinStructure(FALLBACK_PDB);
+    } catch (err2) {
+      console.error("Failed to load FALLBACK_PDB", FALLBACK_PDB, err2);
+      showLoadError(FALLBACK_PDB, err2);
+    }
+  }
 
   // Fetch full PDB list in background so forward/back buttons work
   getPdbIds().then((ids) => {
     if (ids && ids.length > 0) {
       currentPdbIds = ids;
-      // Put DEFAULT_PDB at front so index stays consistent
       if (!currentPdbIds.includes(DEFAULT_PDB)) {
         currentPdbIds.unshift(DEFAULT_PDB);
       }
       currentIndex = currentPdbIds.indexOf(DEFAULT_PDB);
+      if (currentIndex < 0) currentIndex = 0;
       dbg("PDB list loaded:", currentPdbIds.length, "entries");
     } else {
-      const fallback = [DEFAULT_PDB, "1CRN", "4HHB", "1A4W", "2HYY", "6VXX", "1UBQ", "2OOB", "3LZT", "5XNL", "1BNA", "2XHE", "3J3Q", "1HHO", "1TUP"];
-      console.warn("Using fallback PDB IDs because none were fetched.", fallback);
+      const fallback = [DEFAULT_PDB, FALLBACK_PDB, "4HHB", "1A4W", "2HYY", "6VXX", "1UBQ", "2OOB", "3LZT", "5XNL"];
+      console.warn("Using fallback PDB IDs.", fallback);
       currentPdbIds = fallback;
       currentIndex = 0;
     }
   });
+}
+
+function showLoadError(pdbId, err) {
+  const msg = err && err.message ? err.message : String(err);
+  const modelNameEl = document.getElementById("model-name");
+  if (modelNameEl) modelNameEl.textContent = pdbId + " (failed)";
+  if (interactionResultsEl) {
+    interactionResultsEl.textContent = "Load failed: " + msg + ". Try a different PDB ID.";
+    interactionResultsEl.dataset.state = "info-error";
+  }
+  if (metadataContentEl) {
+    metadataContentEl.innerHTML = "";
+    const errDiv = document.createElement("div");
+    errDiv.className = "metadata-error";
+    errDiv.textContent = "Failed to load " + pdbId + ": " + msg;
+    metadataContentEl.appendChild(errDiv);
+  }
 }
 
 function logShownEntity(pdbId) {
@@ -110,7 +142,9 @@ function tuneStageControls(currentStage) {
   controls.dynamicDampingFactor = 0.12;
 }
 
+dbg("Creating NGL.Stage on #viewport");
 const stage = new NGL.Stage("viewport");
+dbg("NGL.Stage created");
 tuneStagePerformance(stage);
 tuneStageControls(stage);
 if (typeof stage.setBackground === "function") {
@@ -161,6 +195,18 @@ function createLoadSession(pdbId) {
   currentLoadSession = session;
   return session;
 }
+const FILTER_DEBOUNCE_MS = 75;
+const DEFAULT_ANALYSIS_MESSAGE = "Select 2\u201310 residues, then Analyze.";
+const SELECTED_RESIDUE_COLOR = "#38bdf8";
+const TYPE_CUTOFFS = {
+  "Hydrogen Bond": 3.5,
+  "Salt Bridge": 4.0,
+  "Ionic Interaction": 6.0,
+  "Disulfide Bond": 2.2,
+};
+const SWEEP_MIN = 2.0;
+const SWEEP_MAX = 6.5;
+
 let currentComponent = null;
 let currentRepresentationMode = "cartoon";
 let currentStructure = null;
@@ -182,25 +228,6 @@ let sweepValue = SWEEP_MIN;
 let sweepAnimationId = null;
 let isSweeping = false;
 let lastAnalyzedInteractions = [];
-
-const FILTER_DEBOUNCE_MS = 75;
-const DEFAULT_ANALYSIS_MESSAGE = "Select 2\u201310 residues, then Analyze.";
-
-// Consistent color semantics:
-// Blue = explicitly selected residue (3D view)
-// Green = interacting residue (side panel CSS only)
-// Interaction-type colors reserved for analysis visualizations
-const SELECTED_RESIDUE_COLOR = "#38bdf8";
-
-// Distance cutoffs by interaction type (used by stability explorer)
-const TYPE_CUTOFFS = {
-  "Hydrogen Bond": 3.5,
-  "Salt Bridge": 4.0,
-  "Ionic Interaction": 6.0,
-  "Disulfide Bond": 2.2,
-};
-const SWEEP_MIN = 2.0;
-const SWEEP_MAX = 6.5;
 
 const representationConfigs = {
   cartoon: [
@@ -413,6 +440,7 @@ if (!SidePanel || typeof SidePanel.init !== "function") {
   throw new Error("SidePanel namespace missing. Ensure sidepanel.js is loaded before proteinslideshow.js.");
 }
 SidePanel.init(analysisPanelEl);
+dbg("SidePanel initialized");
 
 let sidePanelSelection = new Set();
 
@@ -1053,11 +1081,11 @@ function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
 }
 
 async function loadProteinStructure(pdbId) {
-  dbg("loadProteinStructure:", pdbId);
+  dbg("loadProteinStructure: start", pdbId);
   const session = createLoadSession(pdbId);
   const myLoadToken = session.id;
   const modelNameEl = document.getElementById("model-name");
-  modelNameEl.textContent = pdbId;
+  if (modelNameEl) modelNameEl.textContent = pdbId;
   stage.removeAllComponents();
   currentComponent = null;
   currentStructure = null;
@@ -1092,18 +1120,19 @@ async function loadProteinStructure(pdbId) {
   let lastError = null;
 
   for (const source of sources) {
-    modelNameEl.textContent = `${pdbId} (loading...)`;
+    if (modelNameEl) modelNameEl.textContent = `${pdbId} (loading...)`;
+    dbg("loadProteinStructure: trying", source.label, source.url);
     try {
       const structureComponent = await fetchAndLoadStructure(pdbId, source, session);
       // If another load was started since we began, drop this stale component.
       if (myLoadToken !== structureRequestToken) {
-        console.warn(`Stale structure load for ${pdbId} - discarding component`);
+        dbg("loadProteinStructure: stale session, discarding", pdbId);
         try {
           if (structureComponent && typeof structureComponent.remove === 'function') {
             structureComponent.remove();
           }
         } catch (remErr) {
-          console.warn('Failed to remove stale structure component:', remErr);
+          // ignore
         }
         return;
       }
@@ -1113,37 +1142,38 @@ async function loadProteinStructure(pdbId) {
       currentStructure = structureComponent.structure;
       representationHandles = {};
       applyCurrentRepresentation({ rebuild: true });
+      dbg("loadProteinStructure: representation applied, calling autoView");
       structureComponent.autoView();
       updateSpinState();
       logShownEntity(pdbId);
-      modelNameEl.textContent = pdbId;
+      if (modelNameEl) modelNameEl.textContent = pdbId;
       try {
         updateSidePanelResidues(currentStructure);
+        dbg("loadProteinStructure: side panel updated, residues:", residueDataset.list.length);
       } catch (panelError) {
-        console.error(`Loaded ${pdbId} but failed to update side panel`, panelError);
+        console.error(`Loaded ${pdbId} but side panel failed:`, panelError);
         resetAnalysisUI("Residue list unavailable.");
       }
-      return;
+      return; // success
     } catch (err) {
       lastError = err;
-      console.warn(`Failed to load ${pdbId} from ${source.url}:`, err);
+      dbg("loadProteinStructure: source failed", source.label, err.message);
     }
   }
 
-  console.error(`Failed to load structure ${pdbId} from all sources.`, lastError);
-  modelNameEl.textContent = `${pdbId} (failed)`;
+  // All sources failed
+  console.error(`Failed to load ${pdbId} from all sources.`, lastError);
+  if (modelNameEl) modelNameEl.textContent = `${pdbId} (failed)`;
   resetAnalysisUI("Load failed.");
-  if (lastError && lastError.message && /CORS|cross-origin|NetworkError/i.test(lastError.message)) {
-    console.warn("Possible CORS or network error when loading structure. Check console and server CORS headers.");
-  }
+  throw lastError || new Error(`All sources failed for ${pdbId}`);
 }
 
 async function fetchAndLoadStructure(pdbId, source, session) {
   const controller = new AbortController();
-  // attach controller to provided session if available
   if (session && Array.isArray(session.controllers)) {
     session.controllers.push(controller);
   }
+  dbg("fetch:", source.url);
   const response = await fetch(source.url, { signal: controller.signal });
   if (!response.ok) {
     const body = await response.text().catch(() => "(no body)");
@@ -1153,13 +1183,14 @@ async function fetchAndLoadStructure(pdbId, source, session) {
   const contentType = (response.headers.get("content-type") || "").toLowerCase();
   if (/html|json|text\/html|application\/json/i.test(contentType)) {
     const body = await response.text().catch(() => "(unable to read body)");
-    console.error(`Unexpected content-type ${contentType} when fetching ${source.url}. Body:\n`, body);
     throw new Error(`Unexpected content-type ${contentType}`);
   }
 
   const arrayBuffer = await response.arrayBuffer();
+  dbg("fetch: received", arrayBuffer.byteLength, "bytes for", source.label);
   const fileLike = makeFileLike(arrayBuffer, `${pdbId}.${source.fileExt}`, source.mime || "application/octet-stream");
 
+  dbg("stage.loadFile:", pdbId, source.parserExt);
   return stage.loadFile(fileLike, {
     defaultRepresentation: false,
     ext: source.parserExt,
@@ -1203,13 +1234,14 @@ function updateMetadataPanel(pdbId, loadToken, session) {
     .then((metadata) => {
       if (token !== structureRequestToken) return; // stale request
       if (currentLoadSession && session && session.id !== currentLoadSession.id) return; // stale session
+      dbg("metadata loaded for", pdbId);
       renderMetadata(metadata);
     })
     .catch((err) => {
       if (token !== structureRequestToken) return;
-      if (err && err.name === 'AbortError') return; // aborted intentionally
-      console.error(`Error fetching metadata for ${pdbId}:`, err);
-      setMetadataMessage("Unable to load metadata right now. Try again later.", "metadata-error");
+      if (err && err.name === 'AbortError') return;
+      console.error(`Metadata fetch failed for ${pdbId}:`, err);
+      setMetadataMessage("Metadata unavailable.", "metadata-error");
     });
 }
 
