@@ -212,8 +212,19 @@ const TYPE_CUTOFFS = {
   "Disulfide Bond": 2.2,
 };
 const SWEEP_MIN = 2.0;
-const SWEEP_MAX = 10.0;
-const SWEEP_STEP = 0.5;
+const SWEEP_DEFAULT_STEP = 0.5;
+const SWEEP_MAX_STEPS = 60; // Cap to avoid excessive computation
+
+// Dynamic sweep max: coupled to proximity cutoff
+function getSweepMax() { return proximityThreshold; }
+function getSweepStep() {
+  var range = getSweepMax() - SWEEP_MIN;
+  if (range <= 0) return SWEEP_DEFAULT_STEP;
+  var steps = Math.ceil(range / SWEEP_DEFAULT_STEP);
+  if (steps <= SWEEP_MAX_STEPS) return SWEEP_DEFAULT_STEP;
+  // Increase step to stay within budget
+  return Math.round((range / SWEEP_MAX_STEPS) * 10) / 10;
+}
 
 let currentComponent = null;
 let currentRepresentationMode = "cartoon";
@@ -236,6 +247,8 @@ let sweepValue = SWEEP_MIN;
 let sweepAnimationId = null;
 let isSweeping = false;
 let lastAnalyzedInteractions = [];
+// Cache: cutoff → interaction[] built during sweep run
+let sweepStepCache = new Map();
 
 const representationConfigs = {
   cartoon: [
@@ -382,6 +395,10 @@ function setProximityThreshold(nextValue) {
   proximityThreshold = clamped;
   updateProximityDisplay();
   scheduleApplyResidueFilter();
+  // If stability mode is active, re-run sweep with updated range
+  if (stabilityMode) {
+    syncSweepSlider();
+  }
 }
 
 if (proximitySlider) {
@@ -969,12 +986,11 @@ function hasInteractionBetween(residueA, residueB) {
     return interactionCache.get(pairKey);
   }
 
-  const interactions = [];
-  const involvedAtoms = new Set();
-  analyzeResiduePair(residueA, residueB, interactions, involvedAtoms);
-  const result = interactions.length > 0;
-  interactionCache.set(pairKey, result);
-  return result;
+  // Use shared detector with default per-type cutoffs
+  var result = computeInteractions([residueA, residueB], null);
+  var found = result.interactions.length > 0;
+  interactionCache.set(pairKey, found);
+  return found;
 }
 
 
@@ -1089,6 +1105,7 @@ function resetAnalysisUI(message = DEFAULT_ANALYSIS_MESSAGE) {
   stabilityData = [];
   lastAnalyzedInteractions = [];
   sweepValue = SWEEP_MIN;
+  sweepStepCache = new Map();
   stopSweep();
   const stabilityPanel = document.getElementById("stability-explorer");
   if (stabilityPanel) stabilityPanel.hidden = true;
@@ -1228,40 +1245,32 @@ function handleAnalyzeInteractions(selectedSet = sidePanelSelection) {
     return;
   }
 
-  const residueIds = Array.from(selectedSet || new Set());
-  if (residueIds.length < 2 || residueIds.length > 10) {
+  var scope = getAnalysisScope();
+  dbg("Analyze: scope", scope.selectedIds.length, "residues,", scope.pairs.length, "pairs");
+
+  if (scope.selectedIds.length < 2 || scope.selectedIds.length > 10) {
     setInteractionMessage("Select 2\u201310 residues first.", "info-default");
     return;
   }
-
-  const residueData = residueIds
-    .map((id) => residueDataset.map.get(id))
-    .filter(Boolean);
-
-  if (residueData.length < 2) {
+  if (scope.residueData.length < 2) {
     setInteractionMessage("Cannot resolve residue data.", "info-warning");
     return;
   }
 
-  const interactions = [];
-  const involvedAtoms = new Set();
+  // Use shared detector with default per-type cutoffs (cutoff=null)
+  var result = computeInteractions(scope.residueData, null);
+  var interactions = deduplicateInteractions(result.interactions);
+  var involvedAtoms = result.involvedAtoms;
 
-  for (let i = 0; i < residueData.length; i += 1) {
-    for (let j = i + 1; j < residueData.length; j += 1) {
-      analyzeResiduePair(residueData[i], residueData[j], interactions, involvedAtoms);
-    }
-  }
+  dbg("Analyze: found", interactions.length, "interactions");
 
   lastAnalyzedInteractions = interactions;
-  renderInteractionResults(residueData, interactions);
-  updateInteractionVisuals(residueData, interactions, involvedAtoms);
+  renderInteractionResults(scope.residueData, interactions);
+  updateInteractionVisuals(scope.residueData, interactions, involvedAtoms);
 
-  // If stability mode is already active, refresh stability data
-  if (stabilityMode && interactions.length) {
-    stabilityData = computeStabilityData(interactions);
-    renderStabilityResults(stabilityData);
-    updateSweepDisplay();
-    updateSweepVisualization(sweepValue);
+  // If stability mode is already active, refresh
+  if (stabilityMode) {
+    runAndRenderStabilitySweep();
   }
 }
 
@@ -1474,111 +1483,6 @@ function buildResidueData(structure, residueIndex) {
   };
 }
 
-function analyzeResiduePair(resA, resB, interactions, involvedAtoms) {
-  detectHydrogenBonds(resA, resB, interactions, involvedAtoms);
-  detectHydrogenBonds(resB, resA, interactions, involvedAtoms);
-  detectSaltAndIonicInteractions(resA, resB, interactions, involvedAtoms);
-  detectSaltAndIonicInteractions(resB, resA, interactions, involvedAtoms);
-  detectDisulfideBond(resA, resB, interactions, involvedAtoms);
-}
-
-function detectHydrogenBonds(donorResidue, acceptorResidue, interactions, involvedAtoms) {
-  const donorNames = HYDROGEN_DONOR_MAP[donorResidue.resname];
-  const acceptorNames = HYDROGEN_ACCEPTOR_MAP[acceptorResidue.resname];
-  if (!donorNames || !acceptorNames) return;
-
-  const donorAtoms = getAtomsByNames(donorResidue, donorNames);
-  const acceptorAtoms = getAtomsByNames(acceptorResidue, acceptorNames);
-  if (!donorAtoms.length || !acceptorAtoms.length) return;
-
-  const donorProxy = donorResidue.structure.getAtomProxy();
-  const acceptorProxy = acceptorResidue.structure.getAtomProxy();
-
-  donorAtoms.forEach((dAtom) => {
-    donorProxy.index = dAtom.index;
-    acceptorAtoms.forEach((aAtom) => {
-      acceptorProxy.index = aAtom.index;
-      const distance = donorProxy.distanceTo(acceptorProxy);
-      if (distance <= 3.5) {
-        interactions.push({
-          type: "Hydrogen Bond",
-          description: `Hydrogen bond between ${donorResidue.label} ${dAtom.name} and ${acceptorResidue.label} ${aAtom.name} (${distance.toFixed(2)} Å)`,
-          atomA: dAtom.index,
-          atomB: aAtom.index,
-          distance,
-          residueALabel: donorResidue.label,
-          residueBLabel: acceptorResidue.label,
-          atomAName: dAtom.name,
-          atomBName: aAtom.name,
-        });
-        involvedAtoms.add(dAtom.index);
-        involvedAtoms.add(aAtom.index);
-      }
-    });
-  });
-}
-
-function detectSaltAndIonicInteractions(resA, resB, interactions, involvedAtoms) {
-  const positiveAtoms = getAtomsByNames(resA, POSITIVE_RESIDUE_ATOMS[resA.resname]);
-  const negativeAtoms = getAtomsByNames(resB, NEGATIVE_RESIDUE_ATOMS[resB.resname]);
-  if (!positiveAtoms.length || !negativeAtoms.length) return;
-
-  const atomProxyA = resA.structure.getAtomProxy();
-  const atomProxyB = resB.structure.getAtomProxy();
-
-  positiveAtoms.forEach((posAtom) => {
-    atomProxyA.index = posAtom.index;
-    negativeAtoms.forEach((negAtom) => {
-      atomProxyB.index = negAtom.index;
-      const distance = atomProxyA.distanceTo(atomProxyB);
-      if (distance <= 6.0) {
-        const type = distance <= 4.0 ? "Salt Bridge" : "Ionic Interaction";
-        interactions.push({
-          type,
-          description: `${type} between ${resA.label} ${posAtom.name} and ${resB.label} ${negAtom.name} (${distance.toFixed(2)} Å)`,
-          atomA: posAtom.index,
-          atomB: negAtom.index,
-          distance,
-          residueALabel: resA.label,
-          residueBLabel: resB.label,
-          atomAName: posAtom.name,
-          atomBName: negAtom.name,
-        });
-        involvedAtoms.add(posAtom.index);
-        involvedAtoms.add(negAtom.index);
-      }
-    });
-  });
-}
-
-function detectDisulfideBond(resA, resB, interactions, involvedAtoms) {
-  if (resA.resname !== "CYS" || resB.resname !== "CYS") return;
-  const sgA = getAtomsByNames(resA, ["SG"]);
-  const sgB = getAtomsByNames(resB, ["SG"]);
-  if (!sgA.length || !sgB.length) return;
-
-  const atomProxyA = resA.structure.getAtomProxy();
-  const atomProxyB = resB.structure.getAtomProxy();
-  atomProxyA.index = sgA[0].index;
-  atomProxyB.index = sgB[0].index;
-  const distance = atomProxyA.distanceTo(atomProxyB);
-  if (distance <= 2.2) {
-    interactions.push({
-      type: "Disulfide Bond",
-      description: `Disulfide bond between ${resA.label} SG and ${resB.label} SG (${distance.toFixed(2)} Å)`,
-      atomA: sgA[0].index,
-      atomB: sgB[0].index,
-      distance,
-      residueALabel: resA.label,
-      residueBLabel: resB.label,
-      atomAName: "SG",
-      atomBName: "SG",
-    });
-    involvedAtoms.add(sgA[0].index);
-    involvedAtoms.add(sgB[0].index);
-  }
-}
-
 function getAtomsByNames(residueData, names = []) {
   if (!names || !names.length) return [];
   const atoms = [];
@@ -1594,43 +1498,71 @@ function getAtomsByNames(residueData, names = []) {
 }
 
 // ---------------------------------------------------------------------------
-// Cutoff-parameterized interaction detection for stability sweep.
-// Unlike the standard detectors which use hardcoded cutoffs, these accept
-// an explicit cutoff so we can re-detect at each sweep step.
+// Shared interaction detection pipeline.
+// Both Analyze and Stability Sweep use these functions.
 // ---------------------------------------------------------------------------
 
-function detectAllInteractionsAtCutoff(residueData, cutoff) {
-  const interactions = [];
-  for (let i = 0; i < residueData.length; i++) {
-    for (let j = i + 1; j < residueData.length; j++) {
-      detectPairAtCutoff(residueData[i], residueData[j], cutoff, interactions);
+// Returns the analysis scope from current UI state.
+function getAnalysisScope() {
+  var selectedIds = Array.from(sidePanelSelection);
+  var residueData = selectedIds
+    .map(function (id) { return residueDataset.map.get(id); })
+    .filter(Boolean);
+  var pairs = [];
+  for (var i = 0; i < residueData.length; i++) {
+    for (var j = i + 1; j < residueData.length; j++) {
+      pairs.push([residueData[i], residueData[j]]);
     }
   }
-  return interactions;
+  return {
+    selectedIds: selectedIds,
+    residueData: residueData,
+    pairs: pairs,
+  };
 }
 
-function detectPairAtCutoff(resA, resB, cutoff, interactions) {
-  // Hydrogen bonds (standard cutoff 3.5Å)
-  if (cutoff >= 0) {
-    detectHBondsAtCutoff(resA, resB, cutoff, interactions);
-    detectHBondsAtCutoff(resB, resA, cutoff, interactions);
+// Build a stable key for de-duplicating interactions.
+function interactionKey(ix) {
+  var a = ix.residueALabel + ":" + (ix.atomAName || "");
+  var b = ix.residueBLabel + ":" + (ix.atomBName || "");
+  var pair = a < b ? a + "|" + b : b + "|" + a;
+  return ix.type + "/" + pair;
+}
+
+// Core interaction detector. Accepts a cutoff override.
+// When cutoff is null/undefined, uses per-type defaults (TYPE_CUTOFFS).
+// Returns { interactions: [], involvedAtoms: Set }
+function computeInteractions(residueData, cutoff) {
+  var useDefault = (cutoff == null);
+  var interactions = [];
+  var involvedAtoms = new Set();
+
+  for (var i = 0; i < residueData.length; i++) {
+    for (var j = i + 1; j < residueData.length; j++) {
+      var resA = residueData[i];
+      var resB = residueData[j];
+      // H-bonds (both directions)
+      detectHBonds(resA, resB, useDefault ? TYPE_CUTOFFS["Hydrogen Bond"] : cutoff, interactions, involvedAtoms);
+      detectHBonds(resB, resA, useDefault ? TYPE_CUTOFFS["Hydrogen Bond"] : cutoff, interactions, involvedAtoms);
+      // Charged (salt bridge / ionic, both directions)
+      detectCharged(resA, resB, useDefault ? TYPE_CUTOFFS["Ionic Interaction"] : cutoff, interactions, involvedAtoms);
+      detectCharged(resB, resA, useDefault ? TYPE_CUTOFFS["Ionic Interaction"] : cutoff, interactions, involvedAtoms);
+      // Disulfide
+      detectDisulfide(resA, resB, useDefault ? TYPE_CUTOFFS["Disulfide Bond"] : cutoff, interactions, involvedAtoms);
+    }
   }
-  // Salt bridge / ionic (standard cutoff 4.0 / 6.0Å)
-  detectChargedAtCutoff(resA, resB, cutoff, interactions);
-  detectChargedAtCutoff(resB, resA, cutoff, interactions);
-  // Disulfide (standard cutoff 2.2Å)
-  detectDisulfideAtCutoff(resA, resB, cutoff, interactions);
+  return { interactions: interactions, involvedAtoms: involvedAtoms };
 }
 
-function detectHBondsAtCutoff(donor, acceptor, cutoff, interactions) {
-  const dNames = HYDROGEN_DONOR_MAP[donor.resname];
-  const aNames = HYDROGEN_ACCEPTOR_MAP[acceptor.resname];
+function detectHBonds(donor, acceptor, cutoff, interactions, involvedAtoms) {
+  var dNames = HYDROGEN_DONOR_MAP[donor.resname];
+  var aNames = HYDROGEN_ACCEPTOR_MAP[acceptor.resname];
   if (!dNames || !aNames) return;
-  const dAtoms = getAtomsByNames(donor, dNames);
-  const aAtoms = getAtomsByNames(acceptor, aNames);
+  var dAtoms = getAtomsByNames(donor, dNames);
+  var aAtoms = getAtomsByNames(acceptor, aNames);
   if (!dAtoms.length || !aAtoms.length) return;
-  const dp = donor.structure.getAtomProxy();
-  const ap = acceptor.structure.getAtomProxy();
+  var dp = donor.structure.getAtomProxy();
+  var ap = acceptor.structure.getAtomProxy();
   dAtoms.forEach(function (d) {
     dp.index = d.index;
     aAtoms.forEach(function (a) {
@@ -1639,16 +1571,19 @@ function detectHBondsAtCutoff(donor, acceptor, cutoff, interactions) {
       if (dist <= cutoff) {
         interactions.push({
           type: "Hydrogen Bond",
+          description: "Hydrogen bond between " + donor.label + " " + d.name + " and " + acceptor.label + " " + a.name + " (" + dist.toFixed(2) + " \u00C5)",
           atomA: d.index, atomB: a.index, distance: dist,
           residueALabel: donor.label, residueBLabel: acceptor.label,
           atomAName: d.name, atomBName: a.name,
         });
+        involvedAtoms.add(d.index);
+        involvedAtoms.add(a.index);
       }
     });
   });
 }
 
-function detectChargedAtCutoff(resA, resB, cutoff, interactions) {
+function detectCharged(resA, resB, cutoff, interactions, involvedAtoms) {
   var posNames = POSITIVE_RESIDUE_ATOMS[resA.resname];
   var negNames = NEGATIVE_RESIDUE_ATOMS[resB.resname];
   if (!posNames || !negNames) return;
@@ -1663,19 +1598,23 @@ function detectChargedAtCutoff(resA, resB, cutoff, interactions) {
       pb.index = n.index;
       var dist = pa.distanceTo(pb);
       if (dist <= cutoff) {
-        var type = dist <= Math.min(cutoff, 4.0) ? "Salt Bridge" : "Ionic Interaction";
+        var type = dist <= 4.0 ? "Salt Bridge" : "Ionic Interaction";
+        var desc = type + " between " + resA.label + " " + p.name + " and " + resB.label + " " + n.name + " (" + dist.toFixed(2) + " \u00C5)";
         interactions.push({
           type: type,
+          description: desc,
           atomA: p.index, atomB: n.index, distance: dist,
           residueALabel: resA.label, residueBLabel: resB.label,
           atomAName: p.name, atomBName: n.name,
         });
+        involvedAtoms.add(p.index);
+        involvedAtoms.add(n.index);
       }
     });
   });
 }
 
-function detectDisulfideAtCutoff(resA, resB, cutoff, interactions) {
+function detectDisulfide(resA, resB, cutoff, interactions, involvedAtoms) {
   if (resA.resname !== "CYS" || resB.resname !== "CYS") return;
   var sgA = getAtomsByNames(resA, ["SG"]);
   var sgB = getAtomsByNames(resB, ["SG"]);
@@ -1688,43 +1627,53 @@ function detectDisulfideAtCutoff(resA, resB, cutoff, interactions) {
   if (dist <= cutoff) {
     interactions.push({
       type: "Disulfide Bond",
+      description: "Disulfide bond between " + resA.label + " SG and " + resB.label + " SG (" + dist.toFixed(2) + " \u00C5)",
       atomA: sgA[0].index, atomB: sgB[0].index, distance: dist,
       residueALabel: resA.label, residueBLabel: resB.label,
       atomAName: "SG", atomBName: "SG",
     });
+    involvedAtoms.add(sgA[0].index);
+    involvedAtoms.add(sgB[0].index);
   }
 }
 
-// Build a stable key for de-duplicating interactions across sweep steps
-function interactionKey(ix) {
-  var a = ix.residueALabel + ":" + (ix.atomAName || "");
-  var b = ix.residueBLabel + ":" + (ix.atomBName || "");
-  var pair = a < b ? a + "|" + b : b + "|" + a;
-  return ix.type + "/" + pair;
+// De-duplicate interactions (same atom pair from both detection directions)
+function deduplicateInteractions(interactions) {
+  var seen = new Set();
+  return interactions.filter(function (ix) {
+    var key = interactionKey(ix);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-// Run the full sweep: detect interactions at each cutoff step, track persistence
-function runStabilitySweep(selectedResidueIds) {
-  var residueData = selectedResidueIds
-    .map(function (id) { return residueDataset.map.get(id); })
-    .filter(Boolean);
-
+// Run the full sweep: detect interactions at each cutoff step, track persistence.
+// Also populates sweepStepCache for Animate playback.
+function runStabilitySweep(scope) {
+  var residueData = scope.residueData;
   if (residueData.length < 2) return [];
 
-  // Map: interactionKey → { type, residueALabel, residueBLabel, atomAName, atomBName, atomA, atomB, distance, firstSeen, lastSeen, stepCount }
+  var sweepMax = getSweepMax();
+  var step = getSweepStep();
+  dbg("Stability Sweep: range", SWEEP_MIN, "\u2013", sweepMax, "\u00C5, step", step,
+    "\u00C5, residues:", residueData.length, "pairs:", scope.pairs.length);
+
+  sweepStepCache = new Map();
+
+  // Map: interactionKey → persistence record
   var seen = new Map();
 
-  for (var cutoff = SWEEP_MIN; cutoff <= SWEEP_MAX + 0.001; cutoff += SWEEP_STEP) {
+  for (var cutoff = SWEEP_MIN; cutoff <= sweepMax + 0.001; cutoff += step) {
     var c = Math.round(cutoff * 10) / 10; // avoid floating point drift
-    var hits = detectAllInteractionsAtCutoff(residueData, c);
+    var result = computeInteractions(residueData, c);
+    var deduped = deduplicateInteractions(result.interactions);
 
-    // De-duplicate within this step (same atom pair may appear from both directions)
-    var stepKeys = new Set();
-    hits.forEach(function (ix) {
+    // Cache this step for Animate playback
+    sweepStepCache.set(c, deduped);
+
+    deduped.forEach(function (ix) {
       var key = interactionKey(ix);
-      if (stepKeys.has(key)) return;
-      stepKeys.add(key);
-
       if (!seen.has(key)) {
         seen.set(key, {
           type: ix.type,
@@ -1744,6 +1693,8 @@ function runStabilitySweep(selectedResidueIds) {
       entry.lastSeen = c;
       entry.stepCount += 1;
     });
+
+    dbg("  cutoff", c, "\u00C5 \u2192", deduped.length, "interactions");
   }
 
   // Convert to array and compute span
@@ -1755,6 +1706,8 @@ function runStabilitySweep(selectedResidueIds) {
 
   // Sort by span descending (most robust first)
   results.sort(function (a, b) { return b.span - a.span || a.firstSeen - b.firstSeen; });
+
+  dbg("Stability Sweep: total unique interactions:", results.length);
   return results;
 }
 
@@ -1815,42 +1768,17 @@ function updateInteractionVisuals(residueData, interactions, involvedAtoms) {
 
 function toggleStabilityMode() {
   stabilityMode = !stabilityMode;
-  const panel = document.getElementById("stability-explorer");
-  const toggle = document.getElementById("stability-toggle");
+  var panel = document.getElementById("stability-explorer");
+  var toggle = document.getElementById("stability-toggle");
   if (panel) panel.hidden = !stabilityMode;
   if (toggle) toggle.classList.toggle("is-active", stabilityMode);
 
   if (stabilityMode) {
-    // Run a real sweep using current selection
-    dbg("Stability Sweep: starting with", sidePanelSelection.size, "residues");
-    const selectedIds = Array.from(sidePanelSelection);
-    if (selectedIds.length < 2) {
-      stabilityData = [];
-      const container = document.getElementById("stability-results");
-      if (container) container.textContent = "Select 2+ residues first.";
-      return;
-    }
-
-    const sweepResults = runStabilitySweep(selectedIds);
-    dbg("Stability Sweep: found", sweepResults.length, "interactions across sweep range");
-
-    // Convert sweep results to stabilityData format for visualization
-    stabilityData = sweepResults.map(function (entry) {
-      return Object.assign({}, entry, {
-        appearsAt: entry.firstSeen,
-        disappearsAt: entry.lastSeen,
-        rangeWidth: entry.span,
-        robustness: Math.max(0, Math.min(1, entry.span / (SWEEP_MAX - SWEEP_MIN))),
-      });
-    });
-
-    renderStabilityResults(stabilityData);
-    sweepValue = SWEEP_MIN;
-    updateSweepDisplay();
-    updateSweepVisualization(sweepValue);
+    runAndRenderStabilitySweep();
   } else {
     stopSweep();
     stabilityData = [];
+    sweepStepCache = new Map();
     // Restore normal interaction visuals
     if (lastAnalyzedInteractions.length) {
       rebuildInteractionShape(lastAnalyzedInteractions);
@@ -1858,36 +1786,102 @@ function toggleStabilityMode() {
   }
 }
 
-// Compute stability metadata for each interaction: where it appears and
-// disappears on the distance-cutoff axis, plus a robustness score.
-function computeStabilityData(interactions) {
-  return interactions.map((interaction) => {
-    const cutoff = TYPE_CUTOFFS[interaction.type] || 5.0;
-    const appearsAt = interaction.distance;
-    const disappearsAt = cutoff;
-    const rangeWidth = Math.max(0, disappearsAt - appearsAt);
-    const maxRange = SWEEP_MAX - SWEEP_MIN;
-    const robustness = Math.max(0, Math.min(1, rangeWidth / maxRange));
-    return Object.assign({}, interaction, {
-      appearsAt,
-      disappearsAt,
-      rangeWidth,
-      robustness,
+// Central function: run sweep, render results, update viewer.
+// Called on toggle-on, and when Analyze is re-run while sweep is active.
+function runAndRenderStabilitySweep() {
+  var scope = getAnalysisScope();
+  var container = document.getElementById("stability-results");
+
+  if (scope.selectedIds.length < 2) {
+    stabilityData = [];
+    if (container) container.textContent = "Select 2+ residues.";
+    return;
+  }
+  if (scope.residueData.length < 2) {
+    stabilityData = [];
+    if (container) container.textContent = "Cannot resolve residue data.";
+    return;
+  }
+  if (scope.pairs.length === 0) {
+    stabilityData = [];
+    if (container) container.textContent = "No candidate pairs in scope.";
+    return;
+  }
+
+  var sweepMax = getSweepMax();
+  var step = getSweepStep();
+
+  // Sync sweep slider to current range
+  syncSweepSlider();
+
+  var sweepResults = runStabilitySweep(scope);
+
+  if (sweepResults.length === 0) {
+    stabilityData = [];
+    if (container) {
+      container.textContent = "No typed interactions found (" + SWEEP_MIN.toFixed(1) + "\u2013" + sweepMax.toFixed(1) + " \u00C5, step " + step.toFixed(1) + " \u00C5). Only H-bond, salt bridge, ionic, and disulfide types are detected.";
+    }
+
+    // Debug: verify against Analyze at default cutoffs
+    if (DEBUG) {
+      var analyzeResult = computeInteractions(scope.residueData, null);
+      var analyzeDeduped = deduplicateInteractions(analyzeResult.interactions);
+      if (analyzeDeduped.length > 0) {
+        console.warn("[DBG] Sweep found 0 but Analyze finds", analyzeDeduped.length,
+          "at default cutoffs. Check if sweep max (" + sweepMax + ") covers the type cutoffs.");
+      }
+    }
+    return;
+  }
+
+  // Convert to stability data format
+  var range = sweepMax - SWEEP_MIN;
+  stabilityData = sweepResults.map(function (entry) {
+    return Object.assign({}, entry, {
+      appearsAt: entry.firstSeen,
+      disappearsAt: entry.lastSeen,
+      rangeWidth: entry.span,
+      robustness: range > 0 ? Math.max(0, Math.min(1, entry.span / range)) : 0,
     });
   });
+
+  renderStabilityResults(stabilityData);
+  sweepValue = SWEEP_MIN;
+  updateSweepDisplay();
+  updateSweepVisualization(sweepValue);
+}
+
+// Sync sweep slider range and info text to current proximity cutoff
+function syncSweepSlider() {
+  var sweepMax = getSweepMax();
+  var step = getSweepStep();
+  var slider = document.getElementById("sweep-slider");
+  if (slider) {
+    slider.min = String(SWEEP_MIN);
+    slider.max = String(sweepMax);
+    slider.step = "0.1";
+  }
+  var infoEl = document.getElementById("sweep-range-info");
+  if (infoEl) {
+    var stepCount = Math.ceil((sweepMax - SWEEP_MIN) / step);
+    infoEl.textContent = "Sweep: " + SWEEP_MIN.toFixed(1) + "\u2013" + sweepMax.toFixed(1) + " \u00C5 (step " + step.toFixed(1) + " \u00C5, " + stepCount + " steps)";
+  }
 }
 
 function renderStabilityResults(data) {
-  const container = document.getElementById("stability-results");
+  var container = document.getElementById("stability-results");
   if (!container) return;
   container.innerHTML = "";
 
   if (!data.length) {
-    container.textContent = "0 interactions across sweep range " + SWEEP_MIN.toFixed(1) + "\u2013" + SWEEP_MAX.toFixed(1) + " \u00C5.";
+    container.textContent = "No interactions found.";
     return;
   }
 
-  const sorted = data.slice().sort(function (a, b) { return b.robustness - a.robustness; });
+  var sweepMax = getSweepMax();
+  var range = sweepMax - SWEEP_MIN;
+
+  var sorted = data.slice().sort(function (a, b) { return b.robustness - a.robustness; });
 
   // Summary table
   var table = document.createElement("table");
@@ -1932,10 +1926,11 @@ function renderStabilityResults(data) {
   // Distance scale reference
   var scaleDiv = document.createElement("div");
   scaleDiv.className = "stability-scale";
-  for (var v = Math.ceil(SWEEP_MIN); v <= SWEEP_MAX; v += 2) {
+  var scaleStep = range <= 10 ? 2 : (range <= 30 ? 5 : 10);
+  for (var v = Math.ceil(SWEEP_MIN); v <= sweepMax; v += scaleStep) {
     var mark = document.createElement("span");
     mark.className = "stability-scale-mark";
-    mark.style.left = ((v - SWEEP_MIN) / (SWEEP_MAX - SWEEP_MIN) * 100) + "%";
+    mark.style.left = (range > 0 ? (v - SWEEP_MIN) / range * 100 : 0) + "%";
     mark.textContent = v + "\u00C5";
     scaleDiv.appendChild(mark);
   }
@@ -1962,8 +1957,8 @@ function renderStabilityResults(data) {
     var color = INTERACTION_COLORS[entry.type] || 0xffffff;
     var hex = "#" + color.toString(16).padStart(6, "0");
     fill.style.background = hex;
-    var leftPct = Math.max(0, (entry.appearsAt - SWEEP_MIN) / (SWEEP_MAX - SWEEP_MIN) * 100);
-    var widthPct = Math.max(1, entry.rangeWidth / (SWEEP_MAX - SWEEP_MIN) * 100);
+    var leftPct = range > 0 ? Math.max(0, (entry.appearsAt - SWEEP_MIN) / range * 100) : 0;
+    var widthPct = range > 0 ? Math.max(1, entry.rangeWidth / range * 100) : 100;
     fill.style.left = leftPct + "%";
     fill.style.width = widthPct + "%";
 
@@ -1983,6 +1978,7 @@ function renderStabilityResults(data) {
 }
 
 function updateSweepDisplay() {
+  var sweepMax = getSweepMax();
   var valueEl = document.getElementById("sweep-value");
   var slider = document.getElementById("sweep-slider");
   if (valueEl) valueEl.textContent = sweepValue.toFixed(1) + "\u00C5";
@@ -1991,40 +1987,41 @@ function updateSweepDisplay() {
   }
 }
 
-// Rebuild the 3D interaction shape showing only interactions active at the
-// current sweep cutoff. Called on each sweep step.
+// Update 3D viewer to show interactions at the current sweep cutoff.
+// Uses cached per-step results when available; otherwise falls back to
+// checking which stabilityData entries span the value.
 function updateSweepVisualization(value) {
-  if (!stabilityMode || !stabilityData.length || !currentStructure || !currentComponent) return;
+  if (!stabilityMode || !currentStructure || !currentComponent) return;
 
   clearInteractionVisuals();
 
-  var shape = new NGL.Shape("stability-sweep");
-  var atomProxyA = currentStructure.getAtomProxy();
-  var atomProxyB = currentStructure.getAtomProxy();
-  var hasVisible = false;
+  // Find the closest cached step
+  var interactions = getInteractionsAtSweepValue(value);
 
-  stabilityData.forEach(function (entry) {
-    var isActive = value >= entry.appearsAt && value <= entry.disappearsAt;
-    if (isActive) {
-      hasVisible = true;
-      var color = INTERACTION_COLORS[entry.type] || 0xffffff;
-      atomProxyA.index = entry.atomA;
-      atomProxyB.index = entry.atomB;
+  if (interactions && interactions.length > 0) {
+    var shape = new NGL.Shape("stability-sweep");
+    var atomProxyA = currentStructure.getAtomProxy();
+    var atomProxyB = currentStructure.getAtomProxy();
+
+    interactions.forEach(function (ix) {
+      var color = INTERACTION_COLORS[ix.type] || 0xffffff;
+      atomProxyA.index = ix.atomA;
+      atomProxyB.index = ix.atomB;
       var from = [atomProxyA.x, atomProxyA.y, atomProxyA.z];
       var to = [atomProxyB.x, atomProxyB.y, atomProxyB.z];
       shape.addCylinder(from, to, color, 0.15);
       shape.addSphere(from, color, 0.25);
       shape.addSphere(to, color, 0.25);
-    }
-  });
+    });
 
-  if (hasVisible) {
     interactionShapeComponent = stage.addComponentFromObject(shape);
     interactionShapeComponent.addRepresentation("buffer");
   }
 
   // Update sweep cursor position on all stability bars
-  var pct = ((value - SWEEP_MIN) / (SWEEP_MAX - SWEEP_MIN)) * 100;
+  var sweepMax = getSweepMax();
+  var range = sweepMax - SWEEP_MIN;
+  var pct = range > 0 ? ((value - SWEEP_MIN) / range) * 100 : 0;
   document.querySelectorAll(".stability-bar-cursor").forEach(function (cursor) {
     cursor.style.left = pct + "%";
   });
@@ -2037,6 +2034,23 @@ function updateSweepVisualization(value) {
     item.classList.toggle("is-active", active);
     item.classList.toggle("is-faded", !active);
   });
+}
+
+// Look up interactions at a sweep value from the step cache.
+// Finds the closest cached step at or below the value.
+function getInteractionsAtSweepValue(value) {
+  if (sweepStepCache.size === 0) return [];
+  // Round to one decimal
+  var rounded = Math.round(value * 10) / 10;
+  if (sweepStepCache.has(rounded)) return sweepStepCache.get(rounded);
+  // Find closest step <= value
+  var best = null;
+  sweepStepCache.forEach(function (interactions, cutoff) {
+    if (cutoff <= value + 0.001 && (best === null || cutoff > best)) {
+      best = cutoff;
+    }
+  });
+  return best !== null ? sweepStepCache.get(best) : [];
 }
 
 // Rebuild the full interaction shape (used when exiting stability mode)
@@ -2072,9 +2086,14 @@ function startSweep() {
   sweepValue = SWEEP_MIN;
   updateSweepDisplay();
 
+  // Disable Analyze during animation to avoid conflicting renders
+  var analyzeBtn = document.getElementById("analyze-interactions");
+  if (analyzeBtn) analyzeBtn.disabled = true;
+
   var playBtn = document.getElementById("sweep-play");
   if (playBtn) playBtn.textContent = "\u23F8 Pause";
 
+  var sweepMax = getSweepMax();
   var lastTime = performance.now();
 
   function step(now) {
@@ -2084,11 +2103,12 @@ function startSweep() {
     }
     var dt = now - lastTime;
     lastTime = now;
-    // Sweep at ~1.0 Å per second for a comfortable pace
-    sweepValue += (dt / 1000) * 1.0;
+    // Sweep speed: ~2.0 Å/sec for larger ranges, ~1.0 Å/sec for small
+    var speed = sweepMax - SWEEP_MIN > 10 ? 2.0 : 1.0;
+    sweepValue += (dt / 1000) * speed;
 
-    if (sweepValue >= SWEEP_MAX) {
-      sweepValue = SWEEP_MAX;
+    if (sweepValue >= sweepMax) {
+      sweepValue = sweepMax;
       updateSweepDisplay();
       updateSweepVisualization(sweepValue);
       stopSweep();
@@ -2111,6 +2131,11 @@ function stopSweep() {
   }
   var playBtn = document.getElementById("sweep-play");
   if (playBtn) playBtn.textContent = "\u25B6 Animate";
+  // Re-enable Analyze
+  var analyzeBtn = document.getElementById("analyze-interactions");
+  if (analyzeBtn && sidePanelSelection.size >= 2 && sidePanelSelection.size <= 10) {
+    analyzeBtn.disabled = false;
+  }
 }
 
 function resetSweep() {
