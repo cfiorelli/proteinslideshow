@@ -5,14 +5,8 @@ A browser-based tool for exploring residue proximity and side-chain interactions
 ## Run locally
 
 ```bash
-# Option A: Python static server (no install needed)
 python3 -m http.server 8765
 # Then open http://localhost:8765
-
-# Option B: Node dev proxy (if you need CORS proxy for development)
-npm install
-npm start
-# Opens at http://localhost:8080
 ```
 
 No build step required. For GitHub Pages, commit the static files and enable Pages on the `main` branch.
@@ -67,8 +61,8 @@ No build step required. For GitHub Pages, commit the static files and enable Pag
 - `index.html` – Layout, styling, and UI controls (single file).
 - `proteinslideshow.js` – Core logic: NGL viewer, load pipeline, interaction detection, stability explorer.
 - `sidepanel.js` – Side panel state management (residue list, filtering, selection events).
-- `dev-proxy.js` – Express CORS proxy for local development.
+- `share-assets/` – Scripts and copy for generating the OG image, demo GIF, and social posts.
 
 ## License
 
-This project is provided as-is for personal and educational use. See RCSB PDB [terms of use](https://www.rcsb.org/pages/policies).
+MIT — see [LICENSE](LICENSE). Structure data comes from the RCSB PDB and is subject to its [terms of use](https://www.rcsb.org/pages/policies).
